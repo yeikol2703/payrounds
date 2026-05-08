@@ -169,6 +169,52 @@ export default function NewSubscriptionPage() {
     setFriends(friends.filter((_, idx) => idx !== i));
   }
 
+  /**
+   * Re-run email lookup at create time so invites and addMember work even if the
+   * owner never triggered blur lookup (`found` was still undefined).
+   */
+  async function resolveFriendEmailsForCreate(
+    rows: FriendInput[],
+  ): Promise<FriendInput[]> {
+    return Promise.all(
+      rows.map(async (f) => {
+        const email = f.email.trim();
+        if (!email.includes("@")) {
+          return f;
+        }
+        if (f.uid) {
+          return { ...f, email, found: true as const };
+        }
+        try {
+          const user = await getAppUserByEmail(email);
+          if (user) {
+            return {
+              ...f,
+              email,
+              uid: user.uid,
+              displayName: user.displayName,
+              found: true as const,
+            };
+          }
+          return {
+            ...f,
+            email,
+            found: false as const,
+            error:
+              "Not registered yet — they'll get an invite email to join Payround",
+          };
+        } catch {
+          return {
+            ...f,
+            email,
+            found: false as const,
+            error: "Could not look up this email — they'll get an invite link",
+          };
+        }
+      }),
+    );
+  }
+
   async function handleCreate() {
     if (!appUser) {
       return;
@@ -177,6 +223,8 @@ export default function NewSubscriptionPage() {
     setError("");
 
     try {
+      const resolved = await resolveFriendEmailsForCreate(friends);
+
       const subId = await createSubscription({
         ownerId: appUser.uid,
         name: name.trim(),
@@ -184,12 +232,14 @@ export default function NewSubscriptionPage() {
         dueDayOfMonth,
       });
 
-      const registeredFriends = friends.filter((f) => f.uid && f.found);
+      const registeredFriends = resolved.filter(
+        (f) => f.uid && f.uid !== appUser.uid,
+      );
       for (const f of registeredFriends) {
         await addMember(subId, {
           uid: f.uid!,
-          email: f.email,
-          displayName: f.displayName!,
+          email: f.email.trim(),
+          displayName: f.displayName?.trim() || f.email.trim().split("@")[0]!,
         });
       }
 
@@ -224,20 +274,23 @@ export default function NewSubscriptionPage() {
         });
       }
 
-      const unregisteredWithEmail = friends.filter(
-        (f) => f.email.trim() && f.found === false,
-      );
-      if (unregisteredWithEmail.length > 0) {
+      const ownerEmail = appUser.email?.trim().toLowerCase() ?? "";
+      const inviteEmails = resolved
+        .map((f) => f.email.trim().toLowerCase())
+        .filter((email) => email.includes("@") && email !== ownerEmail);
+      const uniqueInviteEmails = [...new Set(inviteEmails)];
+
+      if (uniqueInviteEmails.length > 0) {
         const idToken = await getAuth().currentUser?.getIdToken(true);
         if (!idToken) {
           throw new Error(
             "Could not verify your session to email invites. Try again after re-login.",
           );
         }
-        for (const f of unregisteredWithEmail) {
+        for (const email of uniqueInviteEmails) {
           await sendInvite(
             idToken,
-            f.email.trim(),
+            email,
             subId,
             name.trim(),
             appUser.displayName,
@@ -255,8 +308,8 @@ export default function NewSubscriptionPage() {
   }
 
   const memberCount = friends.filter((f) => f.email.trim()).length;
-  const inviteEmailCount = friends.filter(
-    (f) => f.email.trim() && f.found === false,
+  const inviteEmailCount = friends.filter((f) =>
+    f.email.trim().toLowerCase().includes("@"),
   ).length;
   const perPerson =
     memberCount > 0 && parseFloat(totalCost) > 0
@@ -370,9 +423,10 @@ export default function NewSubscriptionPage() {
       {step === 1 ? (
         <div className="pr-card space-y-5 p-6 sm:p-8">
           <p className="text-sm leading-relaxed text-muted">
-            Add emails for people who split the bill. If they already use
-            Payround, we&apos;ll add them now. If not, they&apos;ll get an
-            invite link by email after you launch.
+            Add emails for people who split the bill. Anyone with a Payround
+            account is added to the group immediately; every friend with an email
+            also gets an invite link so they can open the subscription from their
+            inbox (new users can sign up from that link).
           </p>
 
           <div className="space-y-3">
@@ -506,12 +560,13 @@ export default function NewSubscriptionPage() {
 
           <div className="space-y-2 rounded-2xl border border-accent/25 bg-accent-muted px-4 py-4 text-xs font-medium leading-relaxed text-accent dark:text-blue-100">
             <p>✓ A new payment cycle opens for the current month.</p>
-            <p>✓ Registered friends receive a notification.</p>
+            <p>✓ Registered friends receive an in-app notification.</p>
             <p>✓ You can manage this subscription from the dashboard.</p>
             {inviteEmailCount > 0 ? (
               <p className="pt-1 text-sm font-semibold text-foreground">
                 {inviteEmailCount} friend
-                {inviteEmailCount !== 1 ? "s" : ""} will receive an invite email.
+                {inviteEmailCount !== 1 ? "s" : ""} will receive an invite email
+                (including anyone already on Payround).
               </p>
             ) : null}
           </div>

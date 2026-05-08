@@ -28,7 +28,8 @@ function hasFirebaseConfig(): boolean {
  */
 function buildPlaceholderConfig(): Record<string, string> {
   return {
-    apiKey: "AIzaSyBuildPlaceholder00000000000000000",
+    // Intentionally not `AIzaSy…` — GitHub secret scanning matches that pattern.
+    apiKey: "payround-build-placeholder-not-a-google-api-key",
     authDomain: "payround-build-placeholder.firebaseapp.com",
     projectId: "payround-build-placeholder",
     storageBucket: "payround-build-placeholder.appspot.com",

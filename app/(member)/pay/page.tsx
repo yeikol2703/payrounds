@@ -271,11 +271,13 @@ export default function MemberPayPage() {
                   </div>
                 ) : null}
 
-                {status === "pending_review" && payment?.proofImagePath ? (
+                {status === "pending_review" ? (
                   <div className="space-y-3 rounded-xl border border-accent/25 bg-accent-muted/40 p-4">
-                    <PendingProofThumbnail
-                      proofImagePath={payment.proofImagePath}
-                    />
+                    {payment?.proofImagePath ? (
+                      <PendingProofThumbnail
+                        proofImagePath={payment.proofImagePath}
+                      />
+                    ) : null}
                     <div className="flex items-center gap-3 text-accent dark:text-blue-100">
                       <svg
                         width="20"

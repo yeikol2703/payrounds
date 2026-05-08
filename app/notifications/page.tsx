@@ -58,32 +58,30 @@ function notifCopy(n: AppNotification): { title: string; description: string } {
   switch (n.type) {
     case "proof_uploaded":
       return {
-        title: `${name} uploaded proof`,
-        description: `For ${n.subName}`,
+        title: `${name} uploaded proof for ${n.subName}`,
+        description: `Cycle ${n.cycleId}`,
       };
     case "payment_confirmed":
       return {
-        title: "Payment confirmed",
-        description: `Your payment for ${n.subName} was confirmed`,
+        title: `Your payment for ${n.subName} was confirmed`,
+        description: "",
       };
     case "payment_rejected": {
       const note = n.detail?.trim();
       return {
-        title: "Payment rejected",
-        description: note
-          ? `Your payment for ${n.subName} was rejected. ${note}`
-          : `Your payment for ${n.subName} was rejected`,
+        title: `Your payment for ${n.subName} was rejected`,
+        description: note ?? "",
       };
     }
     case "deadline_reminder":
       return {
-        title: "Payment due soon",
-        description: `For ${n.subName}`,
+        title: `Payment due soon for ${n.subName}`,
+        description: "",
       };
     case "cycle_closed":
       return {
-        title: "Cycle closed",
-        description: `${n.subName} — ${n.cycleId} closed successfully`,
+        title: `${n.subName} — ${n.cycleId} closed successfully`,
+        description: "",
       };
     default:
       return { title: "Update", description: n.subName };
@@ -261,10 +259,14 @@ export default function OwnerNotificationsPage() {
                     <p className="font-semibold leading-snug text-foreground">
                       {lineTitle}
                     </p>
-                    <p className="mt-1 text-xs leading-relaxed text-muted">
-                      {description}
-                    </p>
-                    <p className="mt-1.5 text-xs text-subtle">
+                    {description ? (
+                      <p className="mt-1 text-xs leading-relaxed text-muted">
+                        {description}
+                      </p>
+                    ) : null}
+                    <p
+                      className={`text-xs text-subtle ${description ? "mt-1.5" : "mt-1"}`}
+                    >
                       {formatTimeAgo(n)}
                     </p>
                   </div>
