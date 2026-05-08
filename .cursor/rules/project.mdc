@@ -1,0 +1,88 @@
+# PayRound — Cursor project rules
+
+## What this app does
+
+Subscription cost-sharing tracker. One owner manages subscriptions and confirms payments. Friends (members) log in monthly to upload payment proof screenshots.
+
+## Stack
+
+- Next.js App Router, TypeScript strict mode
+- Firebase: Auth (magic link + Google SSO), Firestore, Storage
+- Tailwind CSS v3
+- Resend for transactional email
+- Deployed on Vercel (Hobby)
+
+## Role system
+
+- **owner** — Creates subscriptions, invites friends, reviews proofs, closes monthly cycles. Only one owner exists.
+- **member** — Invited friends; can view their subscriptions, upload proof, see payment state.
+
+Route groups:
+
+- `(auth)` → public — login, invite accept
+- `(owner)` → owner only — dashboard, subscriptions, notifications
+- `(member)` → authenticated — payment view
+
+## Firestore collections
+
+```
+/users/{uid}
+/subscriptions/{subId}
+/subscriptions/{subId}/members/{uid}
+/subscriptions/{subId}/cycles/{cycleId}       ← cycleId = "YYYY-MM"
+/subscriptions/{subId}/cycles/{cycleId}/payments/{uid}
+/users/{uid}/notifications/{notifId}
+/invites/{token}
+```
+
+Enums:
+
+- `Subscription.status` → `"active" | "cancelled"`
+- `Payment.status` → `"missing" | "pending_review" | "confirmed"`
+- `Cycle.status` → `"open" | "success" | "closed_with_issues"`
+- `NotificationType` → see `lib/types.ts`
+
+## Architecture rules
+
+1. **All Firestore/Storage calls go through `lib/firestore/*.ts`.** Import from `@/lib/firestore` or specific modules — not raw `getDoc` / `uploadBytes` in components.
+
+2. **Server Actions** in `app/actions/*.ts` when you need server-side validation.
+
+3. **Real-time**: `subscribeToSubscriptions`, `subscribeToPayments`, `subscribeToNotifications` — clean up in `useEffect`.
+
+4. **`amountOwed`** on each member is recalculated in a transaction when members are added or removed:
+
+   `amountOwed = totalCost / (memberCount + 1)`
+
+   The `+1` is the owner’s share (owner pays the bill; members reimburse their slice).
+
+5. **`cycleId`** is always `"YYYY-MM"`. Use `toCycleId(date)` from `lib/firestore/cycles.ts`.
+
+6. **Proof images** at `proofs/{subId}/{cycleId}/{uid}`. Do not change this path.
+
+7. **Notifications** are usually written by the client after mutations; deadline reminders may come from Cloud Functions.
+
+## File conventions
+
+- `lib/types.ts` — `AppNotification`, `PendingInvite`, composites (`SubscriptionWithMembers`, etc.)
+- `lib/firebase.ts` — singleton `auth`, `db`, `storage`
+- `lib/firestore/index.ts` — barrel export
+
+## Forms
+
+Use `react-hook-form` + `zod` + `@hookform/resolvers`.
+
+## Auth
+
+- Owner: Google via `signInWithPopup`
+- Members: magic link via `sendSignInLinkToEmail`; stash email in `localStorage` (`emailForSignIn`)
+- After sign-in, read `/users/{uid}` for `role` to route owner vs member
+
+## Do NOT
+
+- Call Firestore/Storage directly from components
+- Store money amounts as strings — use `number`
+- Use Firebase Admin on the client
+- Use the `pages/` router
+- Hard-code owner UID — use auth context
+- Create cycles with auto-IDs — always `"YYYY-MM"`

@@ -1,0 +1,47 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    match /users/{uid} {
+      allow read, write: if request.auth != null && request.auth.uid == uid;
+
+      match /notifications/{notifId} {
+        allow read, write: if request.auth != null && request.auth.uid == uid;
+      }
+    }
+
+    match /subscriptions/{subId} {
+      allow read: if isOwner(subId) || isMember(subId);
+      allow create: if request.auth != null;
+      allow update, delete: if isOwner(subId);
+
+      match /members/{memberUid} {
+        allow read: if isOwner(subId) || isMember(subId);
+        allow write: if isOwner(subId);
+      }
+
+      match /cycles/{cycleId} {
+        allow read: if isOwner(subId) || isMember(subId);
+        allow write: if isOwner(subId);
+
+        match /payments/{paymentUid} {
+          allow read: if isOwner(subId) || isMember(subId);
+          allow update: if request.auth != null
+            && request.auth.uid == paymentUid
+            && isMember(subId);
+          allow create, delete: if isOwner(subId);
+        }
+      }
+    }
+
+    function isOwner(subId) {
+      return request.auth != null
+        && get(/databases/$(database)/documents/subscriptions/$(subId)).data.ownerId == request.auth.uid;
+    }
+
+    function isMember(subId) {
+      return request.auth != null
+        && exists(/databases/$(database)/documents/subscriptions/$(subId)/members/$(request.auth.uid));
+    }
+  }
+}
