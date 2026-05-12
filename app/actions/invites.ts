@@ -93,8 +93,10 @@ export async function getInvitePublic(
 }
 
 /**
- * Creates `/invites/{token}` and sends Resend email.
+ * Creates `/invites/{token}` and attempts to send Resend email.
  * Verifies `idToken` belongs to `ownerId` and owns `subId`.
+ * If email fails (e.g. Resend test limits) or Resend is not configured, the invite
+ * document is still written and `emailSent` is false so the client can show the link.
  */
 export async function sendInvite(
   idToken: string,
@@ -103,7 +105,7 @@ export async function sendInvite(
   subName: string,
   ownerDisplayName: string,
   ownerId: string,
-): Promise<{ token: string }> {
+): Promise<{ token: string; emailSent: boolean }> {
   const invitedEmail = email.trim().toLowerCase();
   if (!invitedEmail.includes("@")) {
     throw new Error("Invalid email");
@@ -147,35 +149,48 @@ export async function sendInvite(
 
   const apiKey = process.env.RESEND_API_KEY?.trim();
   if (!apiKey) {
-    throw new Error("RESEND_API_KEY is not configured");
+    console.error(
+      "sendInvite: RESEND_API_KEY is not configured; invite saved without email",
+      { subId, invitedEmail },
+    );
+    return { token, emailSent: false };
   }
 
   const resend = new Resend(apiKey);
   const from =
     process.env.RESEND_FROM_EMAIL?.trim() || "onboarding@resend.dev";
 
-  const { error } = await resend.emails.send({
-    from,
-    to: invitedEmail,
-    subject: `You've been invited to share ${subName.trim()} on PayRounds`,
-    html: `
+  try {
+    const { error } = await resend.emails.send({
+      from,
+      to: invitedEmail,
+      subject: `You've been invited to share ${subName.trim()} on PayRounds`,
+      html: `
       <p>Hi,</p>
       <p><strong>${ownerDisplayName.trim()}</strong> invited you to split <strong>${subName.trim()}</strong> on Payround.</p>
       <p><a href="${inviteUrl}">Open your invite</a> (link expires in 72 hours).</p>
       <p style="color:#64748b;font-size:12px;">If you did not expect this, you can ignore this email.</p>
     `,
-  });
+    });
 
-  if (error) {
-    console.error("Resend sendInvite", error);
-    throw new Error(
-      typeof error === "object" && error && "message" in error
-        ? String((error as { message: string }).message)
-        : "Failed to send invite email",
-    );
+    if (error) {
+      console.error("sendInvite: Resend returned an error (invite still created)", {
+        subId,
+        invitedEmail,
+        error,
+      });
+      return { token, emailSent: false };
+    }
+  } catch (e) {
+    console.error("sendInvite: Resend send threw (invite still created)", {
+      subId,
+      invitedEmail,
+      e,
+    });
+    return { token, emailSent: false };
   }
 
-  return { token };
+  return { token, emailSent: true };
 }
 
 const TX_RETRIES = 5;

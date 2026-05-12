@@ -57,7 +57,10 @@ function formatBillingDayPhrase(day: number): string {
 }
 
 function Steps({ current }: { current: number }) {
-  const steps = ["Details", "Friends", "Review"];
+  const steps =
+    current >= 3
+      ? (["Details", "Friends", "Review", "Share links"] as const)
+      : (["Details", "Friends", "Review"] as const);
   return (
     <div className="mb-10 flex flex-wrap items-center gap-y-2">
       {steps.map((s, i) => {
@@ -98,6 +101,10 @@ function Steps({ current }: { current: number }) {
 export default function NewSubscriptionPage() {
   const { appUser } = useAuth();
   const router = useRouter();
+
+  const [manualInviteLinks, setManualInviteLinks] = useState<
+    { email: string; url: string }[] | null
+  >(null);
 
   const [step, setStep] = useState(0);
   const [saving, setSaving] = useState(false);
@@ -221,6 +228,7 @@ export default function NewSubscriptionPage() {
     }
     setSaving(true);
     setError("");
+    setManualInviteLinks(null);
 
     try {
       const resolved = await resolveFriendEmailsForCreate(friends);
@@ -287,8 +295,14 @@ export default function NewSubscriptionPage() {
             "Could not verify your session to email invites. Try again after re-login.",
           );
         }
+        const appBase =
+          process.env.NEXT_PUBLIC_APP_URL?.replace(/\/$/, "") ||
+          (typeof window !== "undefined" ? window.location.origin : "") ||
+          "http://localhost:3000";
+
+        const manual: { email: string; url: string }[] = [];
         for (const email of uniqueInviteEmails) {
-          await sendInvite(
+          const { token, emailSent } = await sendInvite(
             idToken,
             email,
             subId,
@@ -296,6 +310,15 @@ export default function NewSubscriptionPage() {
             appUser.displayName,
             appUser.uid,
           );
+          const url = `${appBase}/invite/${token}`;
+          if (!emailSent) {
+            manual.push({ email, url });
+          }
+        }
+        if (manual.length > 0) {
+          setManualInviteLinks(manual);
+          setStep(3);
+          return;
         }
       }
 
@@ -320,7 +343,13 @@ export default function NewSubscriptionPage() {
     <div className="mx-auto max-w-2xl p-6 sm:p-8">
       <button
         type="button"
-        onClick={() => (step === 0 ? router.back() : setStep(step - 1))}
+        onClick={() =>
+          step === 0
+            ? router.back()
+            : step === 3
+              ? router.push("/dashboard")
+              : setStep(step - 1)
+        }
         className="pr-link-back mb-8"
       >
         <svg
@@ -336,7 +365,7 @@ export default function NewSubscriptionPage() {
         >
           <polyline points="15 18 9 12 15 6" />
         </svg>
-        {step === 0 ? "Back to dashboard" : "Back"}
+        {step === 0 ? "Back to dashboard" : step === 3 ? "Dashboard" : "Back"}
       </button>
 
       <h1 className="pr-page-title mb-2">New subscription</h1>
@@ -611,6 +640,50 @@ export default function NewSubscriptionPage() {
                 Launch tracker
               </>
             )}
+          </button>
+        </div>
+      ) : null}
+
+      {step === 3 && manualInviteLinks && manualInviteLinks.length > 0 ? (
+        <div className="space-y-5">
+          <div className="pr-card p-6 sm:p-8 shadow-card">
+            <h2 className="mb-2 text-sm font-semibold text-foreground">
+              Share invite links manually
+            </h2>
+            <p className="mb-6 text-sm leading-relaxed text-muted">
+              We couldn&apos;t send one or more invite emails (for example,
+              Resend testing limits). Your subscription is already live — copy
+              each link and send it to the matching friend.
+            </p>
+            <ul className="space-y-4">
+              {manualInviteLinks.map(({ email, url }) => (
+                <li
+                  key={email}
+                  className="rounded-xl border border-border bg-elevated-muted/40 p-4"
+                >
+                  <p className="mb-2 text-xs font-medium text-muted">{email}</p>
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                    <code className="flex-1 break-all rounded-lg bg-elevated px-3 py-2 text-xs text-foreground">
+                      {url}
+                    </code>
+                    <button
+                      type="button"
+                      onClick={() => void navigator.clipboard.writeText(url)}
+                      className="shrink-0 rounded-xl border border-border bg-elevated px-3 py-2 text-xs font-semibold text-foreground shadow-sm transition hover:bg-elevated-muted"
+                    >
+                      Copy link
+                    </button>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </div>
+          <button
+            type="button"
+            onClick={() => router.push("/dashboard")}
+            className="pr-btn-primary w-full py-3.5"
+          >
+            Continue to dashboard
           </button>
         </div>
       ) : null}

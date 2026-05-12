@@ -41,6 +41,9 @@ functions/.env
 # firebase
 .firebase/
 
+# Firebase Admin SDK key (never commit)
+serviceAccount.json
+
 # functions build output
 functions/lib/
 
