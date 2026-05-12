@@ -11,7 +11,7 @@ import {
   getDownloadURL,
   deleteObject,
 } from "firebase/storage";
-import { db, storage } from "@/lib/firebase";
+import { db, getFirebaseStorage } from "@/lib/firebase";
 import type { Payment, PaymentStatus } from "@/lib/types";
 
 function paymentsCol(subId: string, cycleId: string) {
@@ -54,7 +54,7 @@ export async function uploadProof(
   file: File,
 ): Promise<string> {
   const path = proofStoragePath(subId, cycleId, uid);
-  const storageRef = ref(storage, path);
+  const storageRef = ref(getFirebaseStorage(), path);
 
   await uploadBytes(storageRef, file, {
     contentType: file.type,
@@ -98,7 +98,7 @@ export async function rejectPayment(
 ): Promise<void> {
   const path = proofStoragePath(subId, cycleId, uid);
   try {
-    await deleteObject(ref(storage, path));
+    await deleteObject(ref(getFirebaseStorage(), path));
   } catch {
     // File may not exist
   }
@@ -112,5 +112,5 @@ export async function rejectPayment(
 }
 
 export async function getProofUrl(storagePath: string): Promise<string> {
-  return getDownloadURL(ref(storage, storagePath));
+  return getDownloadURL(ref(getFirebaseStorage(), storagePath));
 }

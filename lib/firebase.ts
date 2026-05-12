@@ -60,9 +60,11 @@ const app: FirebaseApp = getFirebaseApp();
 
 export const auth: Auth = getAuth(app);
 export const db: Firestore = getFirestore(app);
-export const storage: FirebaseStorage = getStorage(app);
 
 export default app;
+
+/** Lazy Storage — `getStorage()` at import time can break RSC / Node prerender. */
+let storageSingleton: FirebaseStorage | null = null;
 
 export function isFirebaseConfigured(): boolean {
   return hasFirebaseConfig();
@@ -77,5 +79,8 @@ export function getDb(): Firestore {
 }
 
 export function getFirebaseStorage(): FirebaseStorage {
-  return storage;
+  if (!storageSingleton) {
+    storageSingleton = getStorage(getFirebaseApp());
+  }
+  return storageSingleton;
 }

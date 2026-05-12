@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
 
 /** Deep links go to the unified member pay hub. */
-export default async function PaySubIdRedirectPage() {
+export default function PaySubIdRedirectPage() {
   redirect("/pay");
 }
