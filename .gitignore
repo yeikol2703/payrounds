@@ -30,6 +30,7 @@ yarn-error.log*
 # env
 .env
 .env.local
+functions/.env
 .env.development.local
 .env.test.local
 .env.production.local
