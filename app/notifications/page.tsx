@@ -280,7 +280,7 @@ export default function OwnerNotificationsPage() {
   }
 
   return (
-    <div className="p-6 sm:p-8">
+    <div className="px-4 pb-6 pt-2 sm:px-6 sm:pb-8 sm:pt-0 md:px-8 md:py-8">
       <div className="mb-8 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <h1 className="pr-page-title">Notifications</h1>
@@ -298,7 +298,7 @@ export default function OwnerNotificationsPage() {
         </button>
       </div>
 
-      <div className="max-w-lg">
+      <div className="mx-auto w-full max-w-lg">
         {notifications.length === 0 ? (
           <p className="text-sm text-muted">No notifications yet.</p>
         ) : (

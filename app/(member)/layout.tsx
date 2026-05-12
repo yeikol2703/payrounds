@@ -50,7 +50,9 @@ export default function MemberLayout({ children }: { children: ReactNode }) {
           <ThemeToggle compact />
         </div>
       </header>
-      <main className="mx-auto max-w-lg px-4 py-8 sm:px-6">{children}</main>
+      <main className="mx-auto w-full max-w-lg px-0 py-6 sm:px-0 sm:py-8">
+        {children}
+      </main>
     </div>
   );
 }

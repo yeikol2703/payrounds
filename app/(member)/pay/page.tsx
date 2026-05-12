@@ -169,7 +169,7 @@ export default function MemberPayPage() {
   const firstName = appUser?.displayName?.split(" ")[0] ?? "there";
 
   return (
-    <div>
+    <div className="mx-auto w-full max-w-lg px-4 sm:px-6">
       <div className="mb-8 flex items-center justify-end">
         <button
           type="button"
@@ -220,7 +220,7 @@ export default function MemberPayPage() {
             return (
               <div
                 key={sub.id}
-                className={`rounded-2xl border-2 bg-elevated p-6 shadow-card ${borderTone}`}
+                className={`rounded-2xl border-2 bg-elevated p-4 shadow-card sm:p-6 ${borderTone}`}
               >
                 <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
                   <div>

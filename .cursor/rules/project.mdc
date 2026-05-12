@@ -7,7 +7,7 @@ Subscription cost-sharing tracker. One owner manages subscriptions and confirms 
 ## Stack
 
 - Next.js App Router, TypeScript strict mode
-- Firebase: Auth (magic link + Google SSO), Firestore, Storage
+- Firebase: Auth (Email/Password for members + Google SSO for owners), Firestore, Storage
 - Tailwind CSS v3
 - Resend for transactional email
 - Deployed on Vercel (Hobby)
@@ -75,7 +75,8 @@ Use `react-hook-form` + `zod` + `@hookform/resolvers`.
 ## Auth
 
 - Owner: Google via `signInWithPopup`
-- Members: magic link via `sendSignInLinkToEmail`; stash email in `localStorage` (`emailForSignIn`)
+- Members: email + password via `signInWithEmailAndPassword` / `createUserWithEmailAndPassword`; profile in `/users/{uid}` with `role: "member"`
+- Invites: `/invite/[token]` registers then `acceptInviteJoin` server action; optional `/login?invite=TOKEN` for existing accounts
 - After sign-in, read `/users/{uid}` for `role` to route owner vs member
 
 ## Do NOT

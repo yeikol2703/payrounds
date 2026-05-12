@@ -196,7 +196,8 @@ export async function sendInvite(
 const TX_RETRIES = 5;
 
 /**
- * After magic-link sign-in: add member to subscription, sync current cycle payments, mark invite accepted.
+ * After a member signs in with email/password (or registers): add them to the
+ * subscription, sync current cycle payments, mark invite accepted.
  */
 export async function acceptInviteJoin(
   token: string,

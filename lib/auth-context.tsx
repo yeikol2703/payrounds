@@ -13,9 +13,9 @@ import {
   onAuthStateChanged,
   signInWithPopup,
   GoogleAuthProvider,
-  sendSignInLinkToEmail,
-  isSignInWithEmailLink,
-  signInWithEmailLink,
+  signInWithEmailAndPassword,
+  createUserWithEmailAndPassword,
+  updateProfile,
   signOut as firebaseSignOut,
 } from "firebase/auth";
 import {
@@ -24,6 +24,7 @@ import {
   setDoc,
   serverTimestamp,
   updateDoc,
+  type DocumentSnapshot,
 } from "firebase/firestore";
 import { useRouter } from "next/navigation";
 import { auth, db } from "@/lib/firebase";
@@ -35,11 +36,12 @@ interface AuthContextValue {
   role: UserRole | null;
   loading: boolean;
   signInWithGoogle: () => Promise<void>;
-  sendMagicLink: (email: string, redirectUrl: string) => Promise<void>;
-  /** Pass `{ skipRedirect: true }` when completing sign-in on `/invite/[token]/confirm` so the page can finish invite acceptance first. */
-  completeMagicLinkSignIn: (options?: {
-    skipRedirect?: boolean;
-  }) => Promise<void>;
+  signInWithPassword: (email: string, password: string) => Promise<void>;
+  registerWithPassword: (
+    email: string,
+    password: string,
+    displayName: string,
+  ) => Promise<void>;
   signOut: () => Promise<void>;
 }
 
@@ -84,7 +86,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const result = await signInWithPopup(auth, provider);
     let profile = await getOrCreateUserProfile(result.user, "owner");
 
-    // Google SSO is always the owner path — correct a stale "member" role.
     if (profile.role !== "owner") {
       await updateDoc(doc(db, "users", result.user.uid), { role: "owner" });
       profile = { ...profile, role: "owner" };
@@ -94,50 +95,42 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     router.push("/dashboard");
   }, [router]);
 
-  const sendMagicLink = useCallback(
-    async (email: string, redirectUrl: string) => {
-      await sendSignInLinkToEmail(auth, email, {
-        url: redirectUrl,
-        handleCodeInApp: true,
+  const signInWithPassword = useCallback(async (email: string, password: string) => {
+    const trimmed = email.trim().toLowerCase();
+    const cred = await signInWithEmailAndPassword(auth, trimmed, password);
+    const profile = await getOrCreateUserProfile(cred.user, "member");
+    setAppUser(profile);
+  }, []);
+
+  const registerWithPassword = useCallback(
+    async (email: string, password: string, displayName: string) => {
+      const trimmedEmail = email.trim().toLowerCase();
+      const trimmedName =
+        displayName.trim() ||
+        trimmedEmail.split("@")[0] ||
+        "Member";
+
+      const cred = await createUserWithEmailAndPassword(
+        auth,
+        trimmedEmail,
+        password,
+      );
+      await updateProfile(cred.user, { displayName: trimmedName });
+
+      await setDoc(doc(db, "users", cred.user.uid), {
+        uid: cred.user.uid,
+        email: trimmedEmail,
+        displayName: trimmedName,
+        role: "member" as const,
+        createdAt: serverTimestamp(),
       });
-      localStorage.setItem("emailForSignIn", email);
+
+      const snap = await getDoc(doc(db, "users", cred.user.uid));
+      if (snap.exists()) {
+        setAppUser(appUserFromFirestoreSnapshot(snap, cred.user, "member"));
+      }
     },
     [],
-  );
-
-  const completeMagicLinkSignIn = useCallback(
-    async (options?: { skipRedirect?: boolean }) => {
-      if (typeof window === "undefined") {
-        return;
-      }
-      if (!isSignInWithEmailLink(auth, window.location.href)) {
-        router.replace("/login");
-        return;
-      }
-
-      let email = localStorage.getItem("emailForSignIn");
-      if (!email) {
-        email =
-          window.prompt("Please enter your email to confirm sign-in") || "";
-      }
-      if (!email) {
-        throw new Error("Email is required to complete sign-in.");
-      }
-
-      const result = await signInWithEmailLink(
-        auth,
-        email,
-        window.location.href,
-      );
-      localStorage.removeItem("emailForSignIn");
-
-      const profile = await getOrCreateUserProfile(result.user, "member");
-      setAppUser(profile);
-      if (!options?.skipRedirect) {
-        router.push("/pay");
-      }
-    },
-    [router],
   );
 
   const signOut = useCallback(async () => {
@@ -154,8 +147,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         role: appUser?.role ?? null,
         loading,
         signInWithGoogle,
-        sendMagicLink,
-        completeMagicLinkSignIn,
+        signInWithPassword,
+        registerWithPassword,
         signOut,
       }}
     >
@@ -172,6 +165,55 @@ export function useAuth(): AuthContextValue {
   return ctx;
 }
 
+/** Maps Firebase Auth errors to short, user-facing copy. */
+export function authErrorToMessage(error: unknown): string {
+  if (error && typeof error === "object" && "code" in error) {
+    const code = String((error as { code: string }).code);
+    switch (code) {
+      case "auth/email-already-in-use":
+        return "That email is already registered. Sign in instead.";
+      case "auth/invalid-email":
+        return "Enter a valid email address.";
+      case "auth/invalid-credential":
+      case "auth/wrong-password":
+      case "auth/user-not-found":
+        return "Wrong email or password. Try again.";
+      case "auth/weak-password":
+        return "Password must be at least 6 characters.";
+      case "auth/too-many-requests":
+        return "Too many attempts. Wait a moment and try again.";
+      case "auth/network-request-failed":
+        return "Network error. Check your connection and try again.";
+      default:
+        break;
+    }
+  }
+  if (error instanceof Error && error.message) {
+    return error.message;
+  }
+  return "Something went wrong. Try again.";
+}
+
+function appUserFromFirestoreSnapshot(
+  snap: DocumentSnapshot,
+  firebaseUser: User,
+  defaultRole: UserRole = "member",
+): AppUser {
+  const data = snap.data()!;
+  return {
+    uid: snap.id,
+    email:
+      ((data.email as string) ?? firebaseUser.email ?? "").toLowerCase(),
+    displayName:
+      (data.displayName as string) ??
+      firebaseUser.displayName ??
+      firebaseUser.email ??
+      "User",
+    role: (data.role as UserRole) ?? defaultRole,
+    createdAt: data.createdAt,
+  } as AppUser;
+}
+
 async function getOrCreateUserProfile(
   firebaseUser: User,
   defaultRole: UserRole = "member",
@@ -180,19 +222,7 @@ async function getOrCreateUserProfile(
   const snap = await getDoc(ref);
 
   if (snap.exists()) {
-    const data = snap.data();
-    return {
-      uid: snap.id,
-      email:
-        ((data.email as string) ?? firebaseUser.email ?? "").toLowerCase(),
-      displayName:
-        (data.displayName as string) ??
-        firebaseUser.displayName ??
-        firebaseUser.email ??
-        "User",
-      role: (data.role as UserRole) ?? defaultRole,
-      createdAt: data.createdAt,
-    } as AppUser;
+    return appUserFromFirestoreSnapshot(snap, firebaseUser, defaultRole);
   }
 
   const newUser = {

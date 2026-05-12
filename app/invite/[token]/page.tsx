@@ -2,20 +2,30 @@
 
 import { useEffect, useState, use } from "react";
 import Link from "next/link";
-import { useAuth } from "@/lib/auth-context";
+import { useRouter } from "next/navigation";
+import { getAuth } from "firebase/auth";
+import { useAuth, authErrorToMessage } from "@/lib/auth-context";
 import { ThemeToggle } from "@/components/theme-toggle";
-import { getInvitePublic, type InvitePublicPayload } from "@/app/actions/invites";
+import {
+  getInvitePublic,
+  acceptInviteJoin,
+  type InvitePublicPayload,
+} from "@/app/actions/invites";
 
 type PageProps = { params: Promise<{ token: string }> };
 
 export default function InviteByTokenPage({ params }: PageProps) {
   const { token } = use(params);
-  const { sendMagicLink } = useAuth();
+  const router = useRouter();
+  const { registerWithPassword } = useAuth();
   const [invite, setInvite] = useState<InvitePublicPayload | null>(null);
+  const [displayName, setDisplayName] = useState("");
   const [email, setEmail] = useState("");
-  const [sending, setSending] = useState(false);
-  const [sent, setSent] = useState(false);
+  const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState("");
+  const [showEmailInUseCta, setShowEmailInUseCta] = useState(false);
 
   useEffect(() => {
     if (invite?.status === "valid" && invite.invitedEmail) {
@@ -37,23 +47,62 @@ export default function InviteByTokenPage({ params }: PageProps) {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    const trimmed = email.trim().toLowerCase();
-    if (!trimmed) {
+    setFormError("");
+    setShowEmailInUseCta(false);
+
+    const trimmedEmail = email.trim().toLowerCase();
+    if (!invite || invite.status !== "valid") {
       return;
     }
-    setFormError("");
-    setSending(true);
+    if (trimmedEmail !== invite.invitedEmail.toLowerCase()) {
+      setFormError(
+        "Use the same email address you were invited with (shown above).",
+      );
+      return;
+    }
+    if (!displayName.trim()) {
+      setFormError("Enter your name.");
+      return;
+    }
+    if (password.length < 6) {
+      setFormError("Password must be at least 6 characters.");
+      return;
+    }
+    if (password !== confirmPassword) {
+      setFormError("Passwords do not match.");
+      return;
+    }
+
+    setSubmitting(true);
     try {
-      const base =
-        process.env.NEXT_PUBLIC_APP_URL?.replace(/\/$/, "") ||
-        (typeof window !== "undefined" ? window.location.origin : "");
-      const redirectUrl = `${base}/invite/${encodeURIComponent(token)}/confirm`;
-      await sendMagicLink(trimmed, redirectUrl);
-      setSent(true);
-    } catch {
-      setFormError("Could not send the sign-in link. Try again.");
+      await registerWithPassword(trimmedEmail, password, displayName.trim());
+      const user = getAuth().currentUser;
+      if (!user) {
+        throw new Error("Account was not created. Try again.");
+      }
+      const idToken = await user.getIdToken(true);
+      const result = await acceptInviteJoin(token, idToken);
+      if (!result.ok) {
+        if (result.error === "already_accepted") {
+          router.replace("/pay");
+          return;
+        }
+        throw new Error(result.error);
+      }
+      router.replace("/pay");
+    } catch (err: unknown) {
+      const msg = authErrorToMessage(err);
+      setFormError(msg);
+      if (
+        err &&
+        typeof err === "object" &&
+        "code" in err &&
+        (err as { code: string }).code === "auth/email-already-in-use"
+      ) {
+        setShowEmailInUseCta(true);
+      }
     } finally {
-      setSending(false);
+      setSubmitting(false);
     }
   }
 
@@ -100,7 +149,7 @@ export default function InviteByTokenPage({ params }: PageProps) {
           <h1 className="text-lg font-semibold text-foreground">
             You already accepted this invite
           </h1>
-          <p className="mt-2 text-sm text-muted">Go to login to open your account.</p>
+          <p className="mt-2 text-sm text-muted">Sign in to open your account.</p>
           <Link href="/login" className="mt-8 inline-flex pr-btn-primary no-underline">
             Go to login
           </Link>
@@ -132,70 +181,123 @@ export default function InviteByTokenPage({ params }: PageProps) {
           </div>
           <h1 className="pr-page-title">You&apos;re invited</h1>
           <p className="pr-section-lead">
-            Join <strong className="text-foreground">{invite.subName}</strong> on Payround
+            Join{" "}
+            <strong className="text-foreground">{invite.subName}</strong> on
+            Payround
           </p>
         </div>
 
-        <div className="pr-card space-y-6 p-8 shadow-card">
+        <div className="pr-card space-y-6 p-6 shadow-card sm:p-8">
           <div className="rounded-xl border border-border bg-elevated-muted px-4 py-3 text-sm text-muted">
             <p>
               <span className="font-semibold text-foreground">
                 {invite.ownerDisplayName}
               </span>{" "}
-              invited{" "}
+              invited you to split{" "}
+              <span className="font-medium text-foreground">{invite.subName}</span>
+              .
+            </p>
+            <p className="mt-2 text-xs">
+              Invited email:{" "}
               <span className="font-medium text-foreground">
                 {invite.invitedEmail}
               </span>
             </p>
           </div>
 
-          {sent ? (
-            <div
-              role="status"
-              className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-4 text-center"
-            >
-              <p className="text-sm font-semibold text-emerald-800 dark:text-emerald-200">
-                Check your email
-              </p>
-              <p className="mt-1 text-xs text-emerald-700/90 dark:text-emerald-300/90">
-                We sent a sign-in link to <strong>{email.trim()}</strong>
-              </p>
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <p className="text-sm text-muted">
+              Create your Payround account to join. Use the invited email and a
+              password (at least 6 characters).
+            </p>
+            <div>
+              <label htmlFor="invite-name" className="pr-label">
+                Your name
+              </label>
+              <input
+                id="invite-name"
+                type="text"
+                autoComplete="name"
+                required
+                value={displayName}
+                onChange={(e) => setDisplayName(e.target.value)}
+                className="pr-input"
+                placeholder="Alex"
+              />
             </div>
-          ) : (
-            <form onSubmit={handleSubmit} className="space-y-4">
-              <p className="text-sm text-muted">
-                Enter the email address you were invited with. We&apos;ll send a
-                secure link to sign in and join the group.
-              </p>
-              <div>
-                <label htmlFor="invite-email" className="pr-label">
-                  Email
-                </label>
-                <input
-                  id="invite-email"
-                  type="email"
-                  required
-                  autoComplete="email"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  className="pr-input"
-                  placeholder={invite.invitedEmail}
-                />
-              </div>
-              <button
-                type="submit"
-                disabled={sending || !email.trim()}
-                className="pr-btn-primary w-full"
+            <div>
+              <label htmlFor="invite-email" className="pr-label">
+                Email
+              </label>
+              <input
+                id="invite-email"
+                type="email"
+                required
+                autoComplete="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                className="pr-input"
+                placeholder={invite.invitedEmail}
+              />
+            </div>
+            <div>
+              <label htmlFor="invite-password" className="pr-label">
+                Password
+              </label>
+              <input
+                id="invite-password"
+                type="password"
+                autoComplete="new-password"
+                required
+                minLength={6}
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                className="pr-input"
+                placeholder="At least 6 characters"
+              />
+            </div>
+            <div>
+              <label htmlFor="invite-confirm" className="pr-label">
+                Confirm password
+              </label>
+              <input
+                id="invite-confirm"
+                type="password"
+                autoComplete="new-password"
+                required
+                minLength={6}
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+                className="pr-input"
+                placeholder="Repeat password"
+              />
+            </div>
+            <button
+              type="submit"
+              disabled={submitting}
+              className="pr-btn-primary w-full"
+            >
+              {submitting ? "Creating account…" : "Create account & join"}
+            </button>
+            {formError ? (
+              <p
+                role="alert"
+                className="text-center text-sm text-red-600 dark:text-red-400"
               >
-                {sending ? "Sending…" : "Email me a sign-in link"}
-              </button>
-              {formError ? (
-                <p role="alert" className="text-center text-sm text-red-600 dark:text-red-400">
-                  {formError}
-                </p>
-              ) : null}
-            </form>
-          )}
+                {formError}
+              </p>
+            ) : null}
+            {showEmailInUseCta ? (
+              <p className="text-center text-sm text-muted">
+                <Link
+                  href={`/login?invite=${encodeURIComponent(token)}`}
+                  className="font-semibold text-accent underline-offset-2 hover:underline dark:text-blue-300"
+                >
+                  Already have an account? Sign in
+                </Link>
+              </p>
+            ) : null}
+          </form>
         </div>
 
         <p className="mt-6 text-center text-xs text-muted">

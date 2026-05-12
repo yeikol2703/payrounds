@@ -62,13 +62,13 @@ function Steps({ current }: { current: number }) {
       ? (["Details", "Friends", "Review", "Share links"] as const)
       : (["Details", "Friends", "Review"] as const);
   return (
-    <div className="mb-10 flex flex-wrap items-center gap-y-2">
+    <div className="mb-10 flex flex-wrap items-center gap-x-2 gap-y-3 sm:gap-x-1 md:gap-x-0">
       {steps.map((s, i) => {
         const done = i < current;
         const active = i === current;
         return (
-          <div key={s} className="flex items-center">
-            <div className="flex items-center gap-2.5">
+          <div key={s} className="flex shrink-0 items-center">
+            <div className="flex items-center gap-2 sm:gap-2.5">
               <div
                 className={`flex h-8 w-8 items-center justify-center rounded-full text-xs font-bold transition ${
                   done
@@ -81,14 +81,14 @@ function Steps({ current }: { current: number }) {
                 {done ? "✓" : i + 1}
               </div>
               <span
-                className={`text-sm ${active ? "font-semibold text-foreground" : "text-muted"}`}
+                className={`max-w-[9rem] text-xs leading-tight sm:max-w-none sm:text-sm ${active ? "font-semibold text-foreground" : "text-muted"}`}
               >
                 {s}
               </span>
             </div>
             {i < steps.length - 1 ? (
               <div
-                className={`mx-3 hidden h-px w-10 sm:block ${done ? "bg-emerald-400/80" : "bg-border"}`}
+                className={`mx-2 hidden h-px w-6 shrink-0 sm:mx-3 sm:w-10 md:block ${done ? "bg-emerald-400/80" : "bg-border"}`}
               />
             ) : null}
           </div>
@@ -340,7 +340,7 @@ export default function NewSubscriptionPage() {
       : null;
 
   return (
-    <div className="mx-auto max-w-2xl p-6 sm:p-8">
+    <div className="mx-auto w-full max-w-2xl px-4 py-6 sm:px-6 sm:py-8">
       <button
         type="button"
         onClick={() =>
@@ -376,7 +376,7 @@ export default function NewSubscriptionPage() {
       <Steps current={step} />
 
       {step === 0 ? (
-        <div className="pr-card space-y-6 p-6 sm:p-8">
+        <div className="pr-card w-full space-y-6 p-4 sm:p-6 md:p-8">
           <div>
             <label htmlFor="sub-name" className="pr-label">
               Service name
@@ -450,7 +450,7 @@ export default function NewSubscriptionPage() {
       ) : null}
 
       {step === 1 ? (
-        <div className="pr-card space-y-5 p-6 sm:p-8">
+        <div className="pr-card w-full space-y-5 p-4 sm:p-6 md:p-8">
           <p className="text-sm leading-relaxed text-muted">
             Add emails for people who split the bill. Anyone with a Payround
             account is added to the group immediately; every friend with an email
@@ -461,14 +461,15 @@ export default function NewSubscriptionPage() {
           <div className="space-y-3">
             {friends.map((f, i) => (
               <div key={f.rowId}>
-                <div className="flex items-center gap-2">
+                <div className="flex flex-col gap-2 md:flex-row md:items-center">
                   <input
                     type="email"
                     placeholder="friend@email.com"
                     value={f.email}
                     onChange={(e) => lookupFriend(i, e.target.value)}
-                    className="pr-input flex-1"
+                    className="pr-input w-full min-w-0 flex-1"
                   />
+                  <div className="flex shrink-0 items-center justify-end gap-2 md:justify-start">
                   {f.found ? (
                     <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-emerald-500/15 text-xs font-bold text-emerald-800 dark:text-emerald-200">
                       {f.displayName?.charAt(0).toUpperCase()}
@@ -495,6 +496,7 @@ export default function NewSubscriptionPage() {
                       </svg>
                     </button>
                   ) : null}
+                </div>
                 </div>
                 {f.found ? (
                   <p className="ml-1 mt-1.5 text-xs font-medium text-emerald-700 dark:text-emerald-300">
@@ -549,7 +551,7 @@ export default function NewSubscriptionPage() {
 
       {step === 2 ? (
         <div className="space-y-5">
-          <div className="pr-card p-6 sm:p-8">
+          <div className="pr-card w-full p-4 sm:p-6 md:p-8">
             <h2 className="mb-5 text-sm font-semibold text-foreground">
               Summary
             </h2>
@@ -646,7 +648,7 @@ export default function NewSubscriptionPage() {
 
       {step === 3 && manualInviteLinks && manualInviteLinks.length > 0 ? (
         <div className="space-y-5">
-          <div className="pr-card p-6 sm:p-8 shadow-card">
+          <div className="pr-card w-full p-4 shadow-card sm:p-6 md:p-8">
             <h2 className="mb-2 text-sm font-semibold text-foreground">
               Share invite links manually
             </h2>

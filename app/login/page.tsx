@@ -1,15 +1,52 @@
 "use client";
 
-import { useState } from "react";
-import { useAuth } from "@/lib/auth-context";
+import { useState, useEffect, Suspense } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { getAuth } from "firebase/auth";
+import { useAuth, authErrorToMessage } from "@/lib/auth-context";
 import { ThemeToggle } from "@/components/theme-toggle";
+import { acceptInviteJoin } from "@/app/actions/invites";
 
-export default function LoginPage() {
-  const { signInWithGoogle, sendMagicLink } = useAuth();
-  const [email, setEmail] = useState("");
-  const [sent, setSent] = useState(false);
+function LoginPageContent() {
+  const { signInWithGoogle, signInWithPassword, registerWithPassword } =
+    useAuth();
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const inviteToken = searchParams.get("invite")?.trim() ?? "";
+
+  const [memberTab, setMemberTab] = useState<"signin" | "register">("signin");
+  const [signInEmail, setSignInEmail] = useState("");
+  const [signInPassword, setSignInPassword] = useState("");
+  const [regName, setRegName] = useState("");
+  const [regEmail, setRegEmail] = useState("");
+  const [regPassword, setRegPassword] = useState("");
+  const [regConfirm, setRegConfirm] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+
+  useEffect(() => {
+    if (inviteToken) {
+      setError("");
+    }
+  }, [inviteToken, memberTab]);
+
+  async function completeInviteIfNeeded() {
+    if (!inviteToken) {
+      return;
+    }
+    const user = getAuth().currentUser;
+    if (!user) {
+      return;
+    }
+    const idToken = await user.getIdToken(true);
+    const result = await acceptInviteJoin(inviteToken, idToken);
+    if (!result.ok) {
+      if (result.error === "already_accepted") {
+        return;
+      }
+      throw new Error(result.error);
+    }
+  }
 
   async function handleGoogle() {
     setError("");
@@ -23,21 +60,47 @@ export default function LoginPage() {
     }
   }
 
-  async function handleMagicLink(e: React.FormEvent) {
+  async function handleMemberSignIn(e: React.FormEvent) {
     e.preventDefault();
-    if (!email) {
+    setError("");
+    if (signInPassword.length < 6) {
+      setError("Password must be at least 6 characters.");
       return;
     }
-    setError("");
     setLoading(true);
     try {
-      const base =
-        process.env.NEXT_PUBLIC_APP_URL || window.location.origin;
-      const redirectUrl = `${base.replace(/\/$/, "")}/invite/confirm`;
-      await sendMagicLink(email, redirectUrl);
-      setSent(true);
-    } catch {
-      setError("Could not send link. Check the email and try again.");
+      await signInWithPassword(signInEmail, signInPassword);
+      await completeInviteIfNeeded();
+      router.replace("/pay");
+    } catch (err) {
+      setError(authErrorToMessage(err));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleMemberRegister(e: React.FormEvent) {
+    e.preventDefault();
+    setError("");
+    if (regPassword.length < 6) {
+      setError("Password must be at least 6 characters.");
+      return;
+    }
+    if (regPassword !== regConfirm) {
+      setError("Passwords do not match.");
+      return;
+    }
+    if (!regName.trim()) {
+      setError("Enter your name.");
+      return;
+    }
+    setLoading(true);
+    try {
+      await registerWithPassword(regEmail, regPassword, regName.trim());
+      await completeInviteIfNeeded();
+      router.replace("/pay");
+    } catch (err) {
+      setError(authErrorToMessage(err));
     } finally {
       setLoading(false);
     }
@@ -72,9 +135,19 @@ export default function LoginPage() {
           </p>
         </div>
 
-        <div className="pr-card space-y-8 p-8">
-          <div>
-            <p className="pr-kicker mb-3">Owner login</p>
+        <div className="pr-card space-y-10 p-6 sm:p-8">
+          <section aria-labelledby="owner-login-heading" className="space-y-3">
+            <div>
+              <h2
+                id="owner-login-heading"
+                className="text-base font-semibold text-foreground"
+              >
+                Owner
+              </h2>
+              <p className="mt-1 text-sm text-muted">
+                Create and manage shared subscriptions. Sign in with Google.
+              </p>
+            </div>
             <button
               type="button"
               onClick={handleGoogle}
@@ -101,7 +174,7 @@ export default function LoginPage() {
               </svg>
               Continue with Google
             </button>
-          </div>
+          </section>
 
           <div className="relative">
             <div className="absolute inset-0 flex items-center">
@@ -114,61 +187,215 @@ export default function LoginPage() {
             </div>
           </div>
 
-          <div>
-            <p className="pr-kicker mb-3">Friend / member login</p>
-
-            {sent ? (
-              <div
-                role="status"
-                className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-4 text-center"
+          <section aria-labelledby="member-login-heading" className="space-y-4">
+            <div>
+              <h2
+                id="member-login-heading"
+                className="text-base font-semibold text-foreground"
               >
-                <p className="text-sm font-semibold text-emerald-800 dark:text-emerald-200">
-                  Check your email
+                Member
+              </h2>
+              <p className="mt-1 text-sm text-muted">
+                Pay your share of subscriptions you were invited to. Use the same
+                email as on your invite.
+              </p>
+              {inviteToken ? (
+                <p className="mt-2 rounded-lg border border-accent/25 bg-accent-muted px-3 py-2 text-xs font-medium text-accent dark:text-blue-100">
+                  After you sign in, we&apos;ll finish joining the subscription from
+                  your invite link.
                 </p>
-                <p className="mt-1 text-xs text-emerald-700/90 dark:text-emerald-300/90">
-                  We sent a sign-in link to <strong>{email}</strong>
-                </p>
-              </div>
-            ) : (
-              <form onSubmit={handleMagicLink} className="space-y-3">
-                <label htmlFor="member-email" className="sr-only">
-                  Email address
-                </label>
-                <input
-                  id="member-email"
-                  type="email"
-                  placeholder="your@email.com"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  required
-                  autoComplete="email"
-                  className="pr-input"
-                />
+              ) : null}
+            </div>
+
+            <div
+              className="flex rounded-xl border border-border bg-elevated-muted p-1"
+              role="tablist"
+              aria-label="Member account"
+            >
+              <button
+                type="button"
+                role="tab"
+                aria-selected={memberTab === "signin"}
+                onClick={() => {
+                  setMemberTab("signin");
+                  setError("");
+                }}
+                className={`flex-1 rounded-lg py-2 text-sm font-semibold transition ${
+                  memberTab === "signin"
+                    ? "bg-elevated text-foreground shadow-sm"
+                    : "text-muted hover:text-foreground"
+                }`}
+              >
+                Sign in
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={memberTab === "register"}
+                onClick={() => {
+                  setMemberTab("register");
+                  setError("");
+                }}
+                className={`flex-1 rounded-lg py-2 text-sm font-semibold transition ${
+                  memberTab === "register"
+                    ? "bg-elevated text-foreground shadow-sm"
+                    : "text-muted hover:text-foreground"
+                }`}
+              >
+                Create account
+              </button>
+            </div>
+
+            {memberTab === "signin" ? (
+              <form onSubmit={handleMemberSignIn} className="space-y-3">
+                <div>
+                  <label htmlFor="signin-email" className="pr-label">
+                    Email
+                  </label>
+                  <input
+                    id="signin-email"
+                    type="email"
+                    autoComplete="email"
+                    required
+                    value={signInEmail}
+                    onChange={(e) => setSignInEmail(e.target.value)}
+                    className="pr-input"
+                    placeholder="your@email.com"
+                  />
+                </div>
+                <div>
+                  <label htmlFor="signin-password" className="pr-label">
+                    Password
+                  </label>
+                  <input
+                    id="signin-password"
+                    type="password"
+                    autoComplete="current-password"
+                    required
+                    minLength={6}
+                    value={signInPassword}
+                    onChange={(e) => setSignInPassword(e.target.value)}
+                    className="pr-input"
+                    placeholder="••••••••"
+                  />
+                </div>
                 <button
                   type="submit"
-                  disabled={loading || !email}
+                  disabled={loading}
                   className="pr-btn-primary w-full"
                 >
-                  Send sign-in link
+                  {loading ? "Signing in…" : "Sign in"}
+                </button>
+              </form>
+            ) : (
+              <form onSubmit={handleMemberRegister} className="space-y-3">
+                <div>
+                  <label htmlFor="reg-name" className="pr-label">
+                    Name
+                  </label>
+                  <input
+                    id="reg-name"
+                    type="text"
+                    autoComplete="name"
+                    required
+                    value={regName}
+                    onChange={(e) => setRegName(e.target.value)}
+                    className="pr-input"
+                    placeholder="Alex"
+                  />
+                </div>
+                <div>
+                  <label htmlFor="reg-email" className="pr-label">
+                    Email
+                  </label>
+                  <input
+                    id="reg-email"
+                    type="email"
+                    autoComplete="email"
+                    required
+                    value={regEmail}
+                    onChange={(e) => setRegEmail(e.target.value)}
+                    className="pr-input"
+                    placeholder="your@email.com"
+                  />
+                </div>
+                <div>
+                  <label htmlFor="reg-password" className="pr-label">
+                    Password
+                  </label>
+                  <input
+                    id="reg-password"
+                    type="password"
+                    autoComplete="new-password"
+                    required
+                    minLength={6}
+                    value={regPassword}
+                    onChange={(e) => setRegPassword(e.target.value)}
+                    className="pr-input"
+                    placeholder="At least 6 characters"
+                  />
+                </div>
+                <div>
+                  <label htmlFor="reg-confirm" className="pr-label">
+                    Confirm password
+                  </label>
+                  <input
+                    id="reg-confirm"
+                    type="password"
+                    autoComplete="new-password"
+                    required
+                    minLength={6}
+                    value={regConfirm}
+                    onChange={(e) => setRegConfirm(e.target.value)}
+                    className="pr-input"
+                    placeholder="Repeat password"
+                  />
+                </div>
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="pr-btn-primary w-full"
+                >
+                  {loading ? "Creating account…" : "Create account"}
                 </button>
               </form>
             )}
-          </div>
 
-          {error ? (
-            <p
-              role="alert"
-              className="rounded-lg bg-red-500/10 px-3 py-2 text-center text-sm text-red-700 dark:text-red-300"
-            >
-              {error}
-            </p>
-          ) : null}
+            {error ? (
+              <p
+                role="alert"
+                className="rounded-lg bg-red-500/10 px-3 py-2 text-center text-sm text-red-700 dark:text-red-300"
+              >
+                {error}
+              </p>
+            ) : null}
+          </section>
         </div>
 
         <p className="mt-8 text-center text-xs text-muted">
-          Not a member yet? Ask the owner to invite you.
+          New to Payround? Owners use Google above; members create an account or
+          sign in, then open an invite link from the owner if you need to join a
+          plan.
         </p>
       </div>
     </div>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex min-h-screen flex-col items-center justify-center gap-3 bg-page p-4">
+          <div
+            className="h-9 w-9 animate-spin rounded-full border-2 border-border border-t-accent"
+            aria-hidden
+          />
+          <p className="text-sm text-muted">Loading…</p>
+        </div>
+      }
+    >
+      <LoginPageContent />
+    </Suspense>
   );
 }

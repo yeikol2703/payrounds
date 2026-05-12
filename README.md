@@ -14,12 +14,14 @@ Subscription cost-sharing tracker. Share Netflix, Spotify, and other subscriptio
 ### Auth routes (`payrounds-v2` merged)
 
 - `/` — redirects by role (owner → `/dashboard`, member → `/pay`, signed out → `/login`)
-- `/login` — Google (owner) + magic link (member); magic link uses `NEXT_PUBLIC_APP_URL` or `window.origin` and completes at **`/invite/confirm`**
-- `/invite/confirm` — finishes email-link sign-in
+- `/login` — Google (owner) + email & password for members (Sign in / Create account tabs). Optional `?invite=TOKEN` completes joining after sign-in.
+- `/invite/confirm` — redirects to `/login` (legacy magic-link URL)
+- `/invite/[token]` — invite landing: create account with name, email, password → join subscription
+- `/invite/[token]/confirm` — redirects to `/invite/[token]`
 - `/dashboard` — owner shell + live subscription cards
 - `/subscriptions/*`, `/notifications` — same owner shell (`OwnerAppShell`)
 
-Add **`/invite/confirm`** (and your dev URL) under Firebase Auth → Authorized domains.
+Add your app domain under Firebase Auth → **Authorized domains** (for Google sign-in and hosted URLs).
 
 For **friend lookup by email** on “New subscription”, add a single-field index on **`users`** → **`email`** (Firestore may prompt when you first run a `where("email", "==", …)` query).
 
@@ -37,7 +39,7 @@ npm install
 ### 2. Firebase project
 
 1. [Firebase Console](https://console.firebase.google.com) → new project
-2. **Authentication**: Google (owner), Email link / passwordless (members)
+2. **Authentication**: enable **Google** (owners) and **Email/Password** (first toggle — members sign in with email + password, not magic link). Disable email link / passwordless if you are not using it.
 3. **Firestore** (production mode to start)
 4. **Storage**
 5. Project settings → Web app → copy config into `.env.local`
@@ -50,7 +52,7 @@ Copy `.env.example` to `.env.local` and fill in:
 - `RESEND_API_KEY`
 - `NEXT_PUBLIC_APP_URL` (e.g. `http://localhost:3000`)
 
-**Vercel:** add the same `NEXT_PUBLIC_FIREBASE_*` (and `NEXT_PUBLIC_APP_URL` for magic links) under **Project → Settings → Environment Variables** for **Production**. The production build can finish without them, but the deployed app needs real Firebase values to work.
+**Vercel:** add the same `NEXT_PUBLIC_FIREBASE_*` (and `NEXT_PUBLIC_APP_URL` for invite links and emails) under **Project → Settings → Environment Variables** for **Production**. The production build can finish without them, but the deployed app needs real Firebase values to work.
 
 ### 4. Firestore indexes
 

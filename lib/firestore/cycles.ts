@@ -9,6 +9,7 @@ import {
   serverTimestamp,
   setDoc,
   updateDoc,
+  writeBatch,
   Timestamp,
   type Unsubscribe,
 } from "firebase/firestore";
@@ -122,6 +123,59 @@ export async function openCycle(
     }),
   );
   await Promise.all(writes);
+}
+
+/**
+ * Ensures `payments` for the current calendar cycle match `members` (amounts,
+ * new rows for new members). Removes payment docs for uids no longer in `members`.
+ */
+export async function syncPaymentsForCurrentCycle(
+  subId: string,
+): Promise<void> {
+  const cid = currentCycleId();
+  const cycleRef = doc(cyclesCol(subId), cid);
+  const cycleSnap = await getDoc(cycleRef);
+  if (!cycleSnap.exists()) {
+    return;
+  }
+
+  const membersCol = collection(db, "subscriptions", subId, "members");
+  const [membersSnap, paymentsSnap] = await Promise.all([
+    getDocs(membersCol),
+    getDocs(paymentsCol(subId, cid)),
+  ]);
+  const memberUids = new Set(membersSnap.docs.map((d) => d.id));
+
+  const batch = writeBatch(db);
+
+  for (const p of paymentsSnap.docs) {
+    if (!memberUids.has(p.id)) {
+      batch.delete(doc(paymentsCol(subId, cid), p.id));
+    }
+  }
+
+  for (const m of membersSnap.docs) {
+    const mData = m.data() as { amountOwed?: number };
+    const owed =
+      typeof mData.amountOwed === "number" ? mData.amountOwed : 0;
+    const pRef = doc(paymentsCol(subId, cid), m.id);
+    const pSnap = paymentsSnap.docs.find((d) => d.id === m.id);
+    if (pSnap) {
+      batch.update(pRef, { amount: owed });
+    } else {
+      batch.set(pRef, {
+        uid: m.id,
+        status: "missing",
+        proofImagePath: null,
+        proofUploadedAt: null,
+        confirmedAt: null,
+        rejectionNote: null,
+        amount: owed,
+      });
+    }
+  }
+
+  await batch.commit();
 }
 
 export async function closeCycle(

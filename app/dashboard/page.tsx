@@ -105,13 +105,16 @@ export default function DashboardPage() {
   });
 
   return (
-    <div className="mx-auto max-w-4xl p-6 sm:p-8">
-      <div className="mb-8 flex flex-col gap-4 sm:mb-10 sm:flex-row sm:items-end sm:justify-between">
+    <div className="mx-auto w-full max-w-4xl px-4 py-6 sm:px-6 md:px-8 md:py-8">
+      <div className="mb-8 flex flex-col gap-4 sm:mb-10 md:flex-row md:items-end md:justify-between">
         <div>
           <h1 className="pr-page-title">{monthLabel}</h1>
           <p className="pr-section-lead">Your active subscriptions</p>
         </div>
-        <Link href="/subscriptions/new" className="pr-btn-primary shrink-0">
+        <Link
+          href="/subscriptions/new"
+          className="pr-btn-primary w-full shrink-0 md:w-auto"
+        >
           <svg
             width="16"
             height="16"
@@ -163,7 +166,7 @@ export default function DashboardPage() {
         </div>
       )}
 
-      <div className="mb-8 grid gap-3 sm:grid-cols-3">
+      <div className="mb-8 grid grid-cols-1 gap-3 md:grid-cols-3">
         {[
           { label: "Active subscriptions", value: cards.length },
           {
@@ -195,7 +198,7 @@ export default function DashboardPage() {
       </div>
 
       {loading ? (
-        <div className="grid gap-4 sm:grid-cols-2">
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
           {[1, 2].map((i) => (
             <div
               key={i}
@@ -239,7 +242,7 @@ export default function DashboardPage() {
           </Link>
         </div>
       ) : (
-        <div className="grid gap-4 sm:grid-cols-2">
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
           {cards.map(({ sub, members, payments }) => {
             const status = getPaymentStatus(payments);
             return (
