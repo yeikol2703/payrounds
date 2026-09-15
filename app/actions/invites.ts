@@ -179,6 +179,7 @@ export async function sendInvite(
   const resend = new Resend(apiKey);
   const from =
     process.env.RESEND_FROM_EMAIL?.trim() || "onboarding@resend.dev";
+  const usingResendTestFrom = /@resend\.dev$/i.test(from);
 
   try {
     const { error } = await resend.emails.send({
@@ -194,23 +195,33 @@ export async function sendInvite(
     });
 
     if (error) {
-      const reason =
+      const raw =
         typeof (error as { message?: string }).message === "string"
           ? (error as { message: string }).message
           : "Resend rejected the send request.";
+      const reason =
+        usingResendTestFrom || /only send testing emails/i.test(raw)
+          ? "Resend is still on the test sender (resend.dev). Verify a domain at resend.com/domains, set RESEND_FROM_EMAIL to an address on that domain in Vercel, and redeploy. Until then, share the invite link (WhatsApp/copy)."
+          : raw;
       console.error("sendInvite: Resend returned an error (invite still created)", {
         subId,
         invitedEmail,
+        from,
         error,
       });
       return { token, emailSent: false, emailFailureReason: reason };
     }
   } catch (e) {
-    const reason =
+    const raw =
       e instanceof Error ? e.message : "Resend request failed unexpectedly.";
+    const reason =
+      usingResendTestFrom || /only send testing emails/i.test(raw)
+        ? "Resend is still on the test sender (resend.dev). Verify a domain at resend.com/domains, set RESEND_FROM_EMAIL to an address on that domain in Vercel, and redeploy. Until then, share the invite link (WhatsApp/copy)."
+        : raw;
     console.error("sendInvite: Resend send threw (invite still created)", {
       subId,
       invitedEmail,
+      from,
       e,
     });
     return { token, emailSent: false, emailFailureReason: reason };
