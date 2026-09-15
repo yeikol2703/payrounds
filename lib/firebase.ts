@@ -1,10 +1,16 @@
 import { getApp, getApps, initializeApp, type FirebaseApp } from "firebase/app";
-import { getAuth, type Auth } from "firebase/auth";
+import { connectAuthEmulator, getAuth, type Auth } from "firebase/auth";
 import {
+  connectFirestoreEmulator,
   getFirestore,
+  initializeFirestore,
   type Firestore,
 } from "firebase/firestore";
-import { getStorage, type FirebaseStorage } from "firebase/storage";
+import {
+  connectStorageEmulator,
+  getStorage,
+  type FirebaseStorage,
+} from "firebase/storage";
 
 const firebaseConfig = {
   apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
@@ -38,10 +44,29 @@ function buildPlaceholderConfig(): Record<string, string> {
   };
 }
 
+function buildEmulatorConfig(): Record<string, string> {
+  return {
+    apiKey: "demo-api-key",
+    authDomain: "localhost",
+    // Always demo-payround so Docker seed data and the app share one emulator project.
+    projectId: "demo-payround",
+    storageBucket: "demo-payround.appspot.com",
+    messagingSenderId: "123456789012",
+    appId: "1:123456789012:web:abcdef",
+  };
+}
+
+function useEmulators(): boolean {
+  return process.env.NEXT_PUBLIC_USE_FIREBASE_EMULATOR === "true";
+}
+
 /** Singleton app — safe to import from any module (including SSR prerender). */
 function getFirebaseApp(): FirebaseApp {
   if (getApps().length > 0) {
     return getApp();
+  }
+  if (useEmulators()) {
+    return initializeApp(buildEmulatorConfig());
   }
   if (hasFirebaseConfig()) {
     return initializeApp({
@@ -56,10 +81,60 @@ function getFirebaseApp(): FirebaseApp {
   return initializeApp(buildPlaceholderConfig());
 }
 
+function createFirestore(appInstance: FirebaseApp): Firestore {
+  if (useEmulators()) {
+    // WebChannel against Docker-mapped Firestore often evaluates rules as
+    // unauthenticated; long polling keeps Auth tokens attached reliably.
+    try {
+      return initializeFirestore(appInstance, {
+        experimentalForceLongPolling: true,
+      });
+    } catch {
+      return getFirestore(appInstance);
+    }
+  }
+  return getFirestore(appInstance);
+}
+
 const app: FirebaseApp = getFirebaseApp();
 
 export const auth: Auth = getAuth(app);
-export const db: Firestore = getFirestore(app);
+export const db: Firestore = createFirestore(app);
+
+let emulatorsConnected = false;
+let storageEmulatorConnected = false;
+
+function connectEmulatorsOnce(): void {
+  if (emulatorsConnected || !useEmulators()) {
+    return;
+  }
+  const authHost =
+    process.env.NEXT_PUBLIC_FIREBASE_AUTH_EMULATOR_HOST?.trim() ||
+    "http://127.0.0.1:9099";
+  const fsHost =
+    process.env.NEXT_PUBLIC_FIREBASE_FIRESTORE_EMULATOR_HOST?.trim() ||
+    "127.0.0.1";
+  const fsPort = Number(
+    process.env.NEXT_PUBLIC_FIREBASE_FIRESTORE_EMULATOR_PORT || 8080,
+  );
+
+  try {
+    connectAuthEmulator(auth, authHost, { disableWarnings: true });
+    connectFirestoreEmulator(db, fsHost, fsPort);
+    emulatorsConnected = true;
+    console.info(
+      `[payround] Firebase emulators: auth=${authHost} firestore=${fsHost}:${fsPort}`,
+    );
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (!msg.toLowerCase().includes("already")) {
+      console.warn("[payround] emulator connect:", msg);
+    }
+    emulatorsConnected = true;
+  }
+}
+
+connectEmulatorsOnce();
 
 export default app;
 
@@ -67,7 +142,7 @@ export default app;
 let storageSingleton: FirebaseStorage | null = null;
 
 export function isFirebaseConfigured(): boolean {
-  return hasFirebaseConfig();
+  return useEmulators() || hasFirebaseConfig();
 }
 
 export function getFirebaseAuth(): Auth {
@@ -81,6 +156,25 @@ export function getDb(): Firestore {
 export function getFirebaseStorage(): FirebaseStorage {
   if (!storageSingleton) {
     storageSingleton = getStorage(getFirebaseApp());
+    if (useEmulators() && !storageEmulatorConnected) {
+      const host =
+        process.env.NEXT_PUBLIC_FIREBASE_STORAGE_EMULATOR_HOST?.trim() ||
+        "127.0.0.1";
+      const port = Number(
+        process.env.NEXT_PUBLIC_FIREBASE_STORAGE_EMULATOR_PORT || 9199,
+      );
+      try {
+        connectStorageEmulator(storageSingleton, host, port);
+        storageEmulatorConnected = true;
+        console.info(`[payround] Storage emulator: ${host}:${port}`);
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        if (!msg.toLowerCase().includes("already")) {
+          console.warn("[payround] storage emulator connect:", msg);
+        }
+        storageEmulatorConnected = true;
+      }
+    }
   }
   return storageSingleton;
 }

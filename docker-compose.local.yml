@@ -1,0 +1,27 @@
+# Full local stack: Firebase emulators (Docker) + Next (host) + Playwright (host)
+# Prefer: npm run test:e2e:emulator
+services:
+  firebase:
+    extends:
+      file: docker-compose.emulators.yml
+      service: firebase
+
+  seed:
+    image: node:22-bookworm
+    working_dir: /work
+    volumes:
+      - ./:/work
+    environment:
+      FIRESTORE_EMULATOR_HOST: firebase:8080
+      FIREBASE_AUTH_EMULATOR_HOST: firebase:9099
+      GCLOUD_PROJECT: demo-payround
+    depends_on:
+      firebase:
+        condition: service_started
+    command: >
+      bash -lc "npm install --omit=dev --no-audit --no-fund &&
+      node -e \"
+      const wait=async()=>{for(let i=0;i<60;i++){try{const r=await fetch('http://firebase:8080'); if(r) return;}catch(e){} await new Promise(r=>setTimeout(r,2000));} throw new Error('firestore emulator timeout');};
+      wait().then(()=>import('./scripts/seed-emulator.mjs'));
+      \""
+    network_mode: service:firebase

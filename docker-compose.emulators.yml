@@ -1,0 +1,32 @@
+services:
+  firebase:
+    image: andreysenov/firebase-tools:13.29.1-node-20
+    # Mounted Windows bind mounts often deny the image's non-root user.
+    user: "0:0"
+    working_dir: /home/node
+    volumes:
+      - ./:/home/node
+      - firebase_emulator_cache:/root/.cache/firebase
+    environment:
+      # Keep emulator debug logs off the bind mount.
+      FIREBASE_DEBUG: ""
+    command:
+      - sh
+      - -c
+      - >
+        rm -f /tmp/firestore-debug.log /tmp/firebase-debug.log 2>/dev/null;
+        firebase emulators:start --only auth,firestore,storage --project demo-payround
+    # Host 8080 is often taken (e.g. Postgres). Map Firestore → 8181.
+    # 9150 = Firestore websocket (needed by newer emulator builds).
+    # 9199 = Storage emulator (payment proof uploads).
+    ports:
+      - "4000:4000"
+      - "4400:4400"
+      - "8181:8080"
+      - "9099:9099"
+      - "9150:9150"
+      - "9199:9199"
+    # Write debug logs under /tmp inside the container via firebase.json hosts.
+
+volumes:
+  firebase_emulator_cache:

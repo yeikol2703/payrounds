@@ -14,16 +14,25 @@ Subscription cost-sharing tracker. Share Netflix, Spotify, and other subscriptio
 ### Auth routes (`payrounds-v2` merged)
 
 - `/` — redirects by role (owner → `/dashboard`, member → `/pay`, signed out → `/login`)
-- `/login` — Google (owner) + email & password for members (Sign in / Create account tabs). Optional `?invite=TOKEN` completes joining after sign-in.
+- `/login` — unified auth: **Google** or **email + password** (Sign in / Create account). Optional `?invite=TOKEN` completes joining after sign-in.
 - `/invite/confirm` — redirects to `/login` (legacy magic-link URL)
-- `/invite/[token]` — invite landing: create account with name, email, password → join subscription
-- `/invite/[token]/confirm` — redirects to `/invite/[token]`
+- `/invite/[token]` — invite landing: join with Google, email account, or one-click if already signed in with the invited email
+- Workspace tabs: **Admin** (subscriptions you own) and **Member** (subscriptions you joined) — same user account
+- Playwright: `npm run test:e2e` (optional Docker: `docker compose -f docker-compose.playwright.yml run --rm playwright` with app already on :3001)
 - `/dashboard` — owner shell + live subscription cards
 - `/subscriptions/*`, `/notifications` — same owner shell (`OwnerAppShell`)
 
 Add your app domain under Firebase Auth → **Authorized domains** (for Google sign-in and hosted URLs).
 
 For **friend lookup by email** on “New subscription”, add a single-field index on **`users`** → **`email`** (Firestore may prompt when you first run a `where("email", "==", …)` query).
+
+**Members seeing their subscriptions** use a **collection group** query on `members` filtered by `uid`. Deploy indexes from this repo so that query works:
+
+```bash
+firebase deploy --only firestore:indexes
+```
+
+(`firestore.indexes.json` includes a `fieldOverrides` entry for collection group `members` / field `uid`.)
 
 ### If you have a `payround-with-env` zip from Claude
 

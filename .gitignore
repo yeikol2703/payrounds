@@ -40,11 +40,23 @@ functions/.env
 
 # firebase
 .firebase/
+.firebase-tools/
+.config/
+firebase-debug.log*
+firestore-debug.log*
+ui-debug.log*
+pubsub-debug.log*
 
 # Firebase Admin SDK key (never commit)
 serviceAccount.json
 
 # functions build output
 functions/lib/
+
+# playwright
+/test-results/
+/playwright-report/
+/blob-report/
+/playwright/.cache/
 
 .vercel

@@ -1,0 +1,15 @@
+# Playwright E2E (optional Docker)
+# Usage from payround/: docker compose -f docker-compose.playwright.yml run --rm playwright
+services:
+  playwright:
+    image: mcr.microsoft.com/playwright:v1.63.0-jammy
+    working_dir: /work
+    volumes:
+      - .:/work
+    network_mode: host
+    environment:
+      CI: "1"
+      PLAYWRIGHT_BASE_URL: http://127.0.0.1:3001
+      PLAYWRIGHT_PORT: "3001"
+    # Host must already be serving the app (npm run dev -p 3001)
+    command: npx playwright test --project=chromium

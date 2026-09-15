@@ -4,9 +4,16 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
+    "dev:emulator": "node scripts/dev-emulator.mjs",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "test:e2e": "playwright test",
+    "test:e2e:ui": "playwright test --ui",
+    "emulator:up": "docker compose -f docker-compose.emulators.yml up -d",
+    "emulator:down": "docker compose -f docker-compose.emulators.yml down",
+    "emulator:seed": "node scripts/seed-emulator.mjs",
+    "test:e2e:emulator": "node scripts/run-e2e-emulator.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",
@@ -14,6 +21,7 @@
     "@radix-ui/react-dropdown-menu": "^2.1.16",
     "firebase": "^11.6.0",
     "firebase-admin": "^13.9.0",
+    "lucide-react": "^1.44.0",
     "next": "^15.3.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
@@ -22,6 +30,7 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@playwright/test": "^1.63.0",
     "@types/node": "^22.0.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",

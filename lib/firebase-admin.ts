@@ -74,11 +74,60 @@ function parseServiceAccount(): ServiceAccountJson | null {
   return null;
 }
 
+function useFirebaseEmulators(): boolean {
+  return (
+    process.env.NEXT_PUBLIC_USE_FIREBASE_EMULATOR === "true" ||
+    Boolean(process.env.FIRESTORE_EMULATOR_HOST?.trim()) ||
+    Boolean(process.env.FIREBASE_AUTH_EMULATOR_HOST?.trim())
+  );
+}
+
+/** Point Admin SDK at local Auth/Firestore emulators (demo-payround). */
+function ensureEmulatorEnv(): string {
+  const projectId =
+    process.env.GCLOUD_PROJECT?.trim() ||
+    process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID?.trim() ||
+    "demo-payround";
+
+  if (!process.env.FIRESTORE_EMULATOR_HOST?.trim()) {
+    const host =
+      process.env.NEXT_PUBLIC_FIREBASE_FIRESTORE_EMULATOR_HOST?.trim() ||
+      "127.0.0.1";
+    const port =
+      process.env.NEXT_PUBLIC_FIREBASE_FIRESTORE_EMULATOR_PORT?.trim() ||
+      "8181";
+    process.env.FIRESTORE_EMULATOR_HOST = `${host}:${port}`;
+  }
+
+  const rawAuth =
+    process.env.FIREBASE_AUTH_EMULATOR_HOST?.trim() ||
+    process.env.NEXT_PUBLIC_FIREBASE_AUTH_EMULATOR_HOST?.trim() ||
+    "127.0.0.1:9099";
+  // Admin SDK wants host:port — no protocol.
+  process.env.FIREBASE_AUTH_EMULATOR_HOST = rawAuth.replace(
+    /^https?:\/\//i,
+    "",
+  );
+
+  return projectId;
+}
+
 /** Throws if Admin is not configured (needed for invite server actions). */
 export function getFirebaseAdminApp(): admin.app.App {
   if (admin.apps.length > 0) {
     return admin.app();
   }
+
+  if (useFirebaseEmulators()) {
+    const projectId = ensureEmulatorEnv();
+    admin.initializeApp({ projectId });
+    initialized = true;
+    console.info(
+      `[payround] Firebase Admin → emulators project=${projectId} fs=${process.env.FIRESTORE_EMULATOR_HOST} auth=${process.env.FIREBASE_AUTH_EMULATOR_HOST}`,
+    );
+    return admin.app();
+  }
+
   const account = parseServiceAccount();
   if (!account) {
     throw new Error(
