@@ -98,16 +98,26 @@ export async function rejectPayment(
 ): Promise<void> {
   const path = proofStoragePath(subId, cycleId, uid);
   try {
-    await deleteObject(ref(getFirebaseStorage(), path));
+    // Storage emulator can hang on delete; don't block the Firestore update.
+    await Promise.race([
+      deleteObject(ref(getFirebaseStorage(), path)),
+      new Promise<never>((_, reject) => {
+        window.        setTimeout(
+          () => reject(new Error("storage delete timed out")),
+          8_000,
+        );
+      }),
+    ]);
   } catch {
-    // File may not exist
+    // File may not exist / emulator flake
   }
 
   await updateDoc(paymentRef(subId, cycleId, uid), {
     status: "missing" as PaymentStatus,
     proofImagePath: null,
     proofUploadedAt: null,
-    rejectionNote: note || "Please resubmit your payment proof.",
+    confirmedAt: null,
+    rejectionNote: note.trim() || null,
   });
 }
 

@@ -23,7 +23,6 @@ import {
   getDoc,
   setDoc,
   serverTimestamp,
-  updateDoc,
   type DocumentSnapshot,
 } from "firebase/firestore";
 import { useRouter } from "next/navigation";
@@ -33,6 +32,7 @@ import type { AppUser, UserRole } from "@/lib/types";
 interface AuthContextValue {
   user: User | null;
   appUser: AppUser | null;
+  /** @deprecated Prefer workspace mode (Admin/Member tabs). Kept for legacy docs. */
   role: UserRole | null;
   loading: boolean;
   signInWithGoogle: () => Promise<void>;
@@ -84,21 +84,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const signInWithGoogle = useCallback(async () => {
     const provider = new GoogleAuthProvider();
     const result = await signInWithPopup(auth, provider);
-    let profile = await getOrCreateUserProfile(result.user, "owner");
-
-    if (profile.role !== "owner") {
-      await updateDoc(doc(db, "users", result.user.uid), { role: "owner" });
-      profile = { ...profile, role: "owner" };
-    }
-
+    // Same account can own subscriptions and join others — do not force role.
+    const profile = await getOrCreateUserProfile(result.user);
     setAppUser(profile);
-    router.push("/dashboard");
-  }, [router]);
+  }, []);
 
   const signInWithPassword = useCallback(async (email: string, password: string) => {
     const trimmed = email.trim().toLowerCase();
     const cred = await signInWithEmailAndPassword(auth, trimmed, password);
-    const profile = await getOrCreateUserProfile(cred.user, "member");
+    await auth.authStateReady();
+    const profile = await getOrCreateUserProfile(cred.user);
     setAppUser(profile);
   }, []);
 
@@ -108,7 +103,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const trimmedName =
         displayName.trim() ||
         trimmedEmail.split("@")[0] ||
-        "Member";
+        "User";
 
       const cred = await createUserWithEmailAndPassword(
         auth,
@@ -121,13 +116,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         uid: cred.user.uid,
         email: trimmedEmail,
         displayName: trimmedName,
+        // Legacy field — not used for routing. Capabilities come from ownership/membership.
         role: "member" as const,
         createdAt: serverTimestamp(),
       });
 
       const snap = await getDoc(doc(db, "users", cred.user.uid));
       if (snap.exists()) {
-        setAppUser(appUserFromFirestoreSnapshot(snap, cred.user, "member"));
+        setAppUser(appUserFromFirestoreSnapshot(snap, cred.user));
       }
     },
     [],
@@ -197,7 +193,6 @@ export function authErrorToMessage(error: unknown): string {
 function appUserFromFirestoreSnapshot(
   snap: DocumentSnapshot,
   firebaseUser: User,
-  defaultRole: UserRole = "member",
 ): AppUser {
   const data = snap.data()!;
   return {
@@ -209,20 +204,21 @@ function appUserFromFirestoreSnapshot(
       firebaseUser.displayName ??
       firebaseUser.email ??
       "User",
-    role: (data.role as UserRole) ?? defaultRole,
+    role: (data.role as UserRole) ?? "member",
     createdAt: data.createdAt,
   } as AppUser;
 }
 
 async function getOrCreateUserProfile(
   firebaseUser: User,
-  defaultRole: UserRole = "member",
 ): Promise<AppUser> {
+  // Ensure Firestore sees a fresh Auth token (emulator / first paint races).
+  await firebaseUser.getIdToken(true);
   const ref = doc(db, "users", firebaseUser.uid);
   const snap = await getDoc(ref);
 
   if (snap.exists()) {
-    return appUserFromFirestoreSnapshot(snap, firebaseUser, defaultRole);
+    return appUserFromFirestoreSnapshot(snap, firebaseUser);
   }
 
   const newUser = {
@@ -230,7 +226,7 @@ async function getOrCreateUserProfile(
     email: (firebaseUser.email ?? "").toLowerCase(),
     displayName:
       firebaseUser.displayName ?? firebaseUser.email ?? "User",
-    role: defaultRole,
+    role: "member" as const,
     createdAt: serverTimestamp(),
   };
 

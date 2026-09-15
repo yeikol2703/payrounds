@@ -5,14 +5,12 @@ import { useRouter } from "next/navigation";
 import { getAuth } from "firebase/auth";
 import { useAuth } from "@/lib/auth-context";
 import { sendInvite } from "@/app/actions/invites";
-import {
-  createSubscription,
-  addMember,
-  getMembers,
-} from "@/lib/firestore/subscriptions";
+import { findUserByEmail } from "@/app/actions/users";
+import { createSubscription } from "@/lib/firestore/subscriptions";
 import { openCycle, toCycleId } from "@/lib/firestore/cycles";
 import { createNotification } from "@/lib/firestore/notifications";
-import { getAppUserByEmail } from "@/lib/firestore/users";
+import { DayOfMonthPicker } from "@/components/day-of-month-picker";
+import { CopyLinkButton } from "@/components/ui/copy-link-button";
 
 interface FriendInput {
   /** Stable React key — must not depend on `email` or the input remounts every keystroke. */
@@ -33,7 +31,7 @@ function createFriendRow(): FriendInput {
 }
 
 /** Calendar day-of-month options (1–28; cap avoids Feb edge cases). */
-const BILLING_DAY_OPTIONS = Array.from({ length: 28 }, (_, i) => i + 1);
+const BILLING_DAY_MAX = 28;
 
 function ordinalSuffix(n: number): string {
   const d = Math.abs(n) % 100;
@@ -103,7 +101,12 @@ export default function NewSubscriptionPage() {
   const router = useRouter();
 
   const [manualInviteLinks, setManualInviteLinks] = useState<
-    { email: string; url: string }[] | null
+    {
+      email: string;
+      url: string;
+      emailFailureReason?: string;
+      inAppNotified?: boolean;
+    }[] | null
   >(null);
 
   const [step, setStep] = useState(0);
@@ -145,7 +148,11 @@ export default function NewSubscriptionPage() {
     }
 
     try {
-      const user = await getAppUserByEmail(email);
+      const idToken = await getAuth().currentUser?.getIdToken(true);
+      if (!idToken) {
+        return;
+      }
+      const user = await findUserByEmail(idToken, email);
       if (user) {
         updated[index] = {
           rowId,
@@ -153,13 +160,14 @@ export default function NewSubscriptionPage() {
           uid: user.uid,
           displayName: user.displayName,
           found: true,
+          error: "Registered — they'll accept from Notifications",
         };
       } else {
         updated[index] = {
           rowId,
           email,
           found: false,
-          error: "Not registered yet — they'll get an invite email",
+          error: "Not registered yet — they'll get an invite link",
         };
       }
       setFriends([...updated]);
@@ -193,7 +201,16 @@ export default function NewSubscriptionPage() {
           return { ...f, email, found: true as const };
         }
         try {
-          const user = await getAppUserByEmail(email);
+          const idToken = await getAuth().currentUser?.getIdToken(true);
+          if (!idToken) {
+            return {
+              ...f,
+              email,
+              found: false as const,
+              error: "Could not look up this email — they'll get an invite link",
+            };
+          }
+          const user = await findUserByEmail(idToken, email);
           if (user) {
             return {
               ...f,
@@ -240,17 +257,6 @@ export default function NewSubscriptionPage() {
         dueDayOfMonth,
       });
 
-      const registeredFriends = resolved.filter(
-        (f) => f.uid && f.uid !== appUser.uid,
-      );
-      for (const f of registeredFriends) {
-        await addMember(subId, {
-          uid: f.uid!,
-          email: f.email.trim(),
-          displayName: f.displayName?.trim() || f.email.trim().split("@")[0]!,
-        });
-      }
-
       const now = new Date();
       const cycleId = toCycleId(now);
       const dueDate = new Date(
@@ -262,25 +268,8 @@ export default function NewSubscriptionPage() {
         dueDate.setMonth(dueDate.getMonth() + 1);
       }
 
-      const members = await getMembers(subId);
-      await openCycle(
-        subId,
-        cycleId,
-        dueDate,
-        members.map((m) => ({ uid: m.uid, amountOwed: m.amountOwed })),
-      );
-
-      for (const f of registeredFriends) {
-        await createNotification({
-          recipientUid: f.uid!,
-          type: "cycle_closed",
-          subId,
-          subName: name.trim(),
-          cycleId,
-          fromUid: appUser.uid,
-          fromDisplayName: appUser.displayName,
-        });
-      }
+      // Cycle starts with owner only; members appear after they accept invites.
+      await openCycle(subId, cycleId, dueDate, []);
 
       const ownerEmail = appUser.email?.trim().toLowerCase() ?? "";
       const inviteEmails = resolved
@@ -300,9 +289,14 @@ export default function NewSubscriptionPage() {
           (typeof window !== "undefined" ? window.location.origin : "") ||
           "http://localhost:3000";
 
-        const manual: { email: string; url: string }[] = [];
+        const manual: {
+          email: string;
+          url: string;
+          emailFailureReason?: string;
+          inAppNotified?: boolean;
+        }[] = [];
         for (const email of uniqueInviteEmails) {
-          const { token, emailSent } = await sendInvite(
+          const { token, emailSent, emailFailureReason } = await sendInvite(
             idToken,
             email,
             subId,
@@ -311,9 +305,38 @@ export default function NewSubscriptionPage() {
             appUser.uid,
           );
           const url = `${appBase}/invite/${token}`;
-          if (!emailSent) {
-            manual.push({ email, url });
+
+          const registered = resolved.find(
+            (f) => f.email.trim().toLowerCase() === email && f.uid,
+          );
+          if (registered?.uid) {
+            try {
+              await createNotification({
+                recipientUid: registered.uid,
+                type: "membership_invite",
+                subId,
+                subName: name.trim(),
+                cycleId,
+                fromUid: appUser.uid,
+                fromDisplayName: appUser.displayName,
+                inviteToken: token,
+              });
+            } catch (notifErr) {
+              console.warn("membership_invite notification failed", notifErr);
+            }
           }
+
+          manual.push({
+            email,
+            url,
+            inAppNotified: Boolean(registered?.uid),
+            emailFailureReason: emailSent
+              ? undefined
+              : emailFailureReason ??
+                (registered?.uid
+                  ? "In-app invite sent; email was not delivered."
+                  : "Email was not delivered."),
+          });
         }
         if (manual.length > 0) {
           setManualInviteLinks(manual);
@@ -412,30 +435,19 @@ export default function NewSubscriptionPage() {
               </div>
             </div>
             <div>
-              <label
-                htmlFor="billing-day-of-month"
-                className="pr-label"
-              >
+              <label htmlFor="billing-day-of-month" className="pr-label">
                 Billing date (day of the month)
               </label>
               <p className="mb-2 text-xs text-muted">
-                Which calendar day is the bill due each month? (1–28 only.)
+                Which calendar day is the bill due each month? (1–{BILLING_DAY_MAX}{" "}
+                only.)
               </p>
-              <select
+              <DayOfMonthPicker
                 id="billing-day-of-month"
                 value={dueDayOfMonth}
-                onChange={(e) =>
-                  setDueDayOfMonth(parseInt(e.target.value, 10))
-                }
-                className="pr-input"
-              >
-                {BILLING_DAY_OPTIONS.map((d) => (
-                  <option key={d} value={d}>
-                    {d}
-                    {ordinalSuffix(d)} of each month
-                  </option>
-                ))}
-              </select>
+                onChange={setDueDayOfMonth}
+                max={BILLING_DAY_MAX}
+              />
             </div>
           </div>
           <button
@@ -650,34 +662,64 @@ export default function NewSubscriptionPage() {
         <div className="space-y-5">
           <div className="pr-card w-full p-4 shadow-card sm:p-6 md:p-8">
             <h2 className="mb-2 text-sm font-semibold text-foreground">
-              Share invite links manually
+              Share invites
             </h2>
             <p className="mb-6 text-sm leading-relaxed text-muted">
-              We couldn&apos;t send one or more invite emails (for example,
-              Resend testing limits). Your subscription is already live — copy
-              each link and send it to the matching friend.
+              Your subscription is live. Friends with an account get an in-app
+              invite; everyone can also use the link below (WhatsApp or copy).
             </p>
             <ul className="space-y-4">
-              {manualInviteLinks.map(({ email, url }) => (
-                <li
-                  key={email}
-                  className="rounded-xl border border-border bg-elevated-muted/40 p-4"
-                >
-                  <p className="mb-2 text-xs font-medium text-muted">{email}</p>
-                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-                    <code className="flex-1 break-all rounded-lg bg-elevated px-3 py-2 text-xs text-foreground">
-                      {url}
-                    </code>
-                    <button
-                      type="button"
-                      onClick={() => void navigator.clipboard.writeText(url)}
-                      className="shrink-0 rounded-xl border border-border bg-elevated px-3 py-2 text-xs font-semibold text-foreground shadow-sm transition hover:bg-elevated-muted"
+              {manualInviteLinks.map(
+                ({ email, url, emailFailureReason, inAppNotified }) => {
+                  const whatsappHref = `https://wa.me/?text=${encodeURIComponent(
+                    `You're invited to split ${name.trim()} on Payround: ${url}`,
+                  )}`;
+                  return (
+                    <li
+                      key={email}
+                      className="rounded-xl border border-border bg-elevated-muted/40 p-4"
                     >
-                      Copy link
-                    </button>
-                  </div>
-                </li>
-              ))}
+                      <p className="mb-2 text-xs font-medium text-muted">
+                        {email}
+                      </p>
+                      {inAppNotified ? (
+                        <p className="mb-3 text-xs text-emerald-800 dark:text-emerald-200">
+                          In-app notification sent — they must Accept in
+                          Notifications before joining.
+                        </p>
+                      ) : null}
+                      {emailFailureReason ? (
+                        <p className="mb-3 rounded-lg border border-amber-500/25 bg-amber-500/10 px-2.5 py-2 text-xs text-amber-950 dark:text-amber-100">
+                          {emailFailureReason}
+                        </p>
+                      ) : null}
+                      <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                        <code className="flex-1 break-all rounded-lg bg-elevated px-3 py-2 text-xs text-foreground">
+                          {url}
+                        </code>
+                        <CopyLinkButton text={url} />
+                      </div>
+                      <a
+                        href={whatsappHref}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl border border-emerald-600/40 bg-emerald-500/10 py-2.5 text-sm font-semibold text-emerald-800 transition hover:bg-emerald-500/20 dark:text-emerald-200"
+                      >
+                        <svg
+                          width="18"
+                          height="18"
+                          viewBox="0 0 24 24"
+                          fill="currentColor"
+                          aria-hidden
+                        >
+                          <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z" />
+                        </svg>
+                        Share on WhatsApp
+                      </a>
+                    </li>
+                  );
+                },
+              )}
             </ul>
           </div>
           <button

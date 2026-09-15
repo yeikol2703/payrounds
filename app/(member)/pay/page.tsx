@@ -1,13 +1,18 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { Timestamp } from "firebase/firestore";
 import { useAuth } from "@/lib/auth-context";
-import { getSubscriptionsForMember } from "@/lib/firestore/subscriptions";
+import { subscribeToSubscriptionsForMember } from "@/lib/firestore/subscriptions";
 import { subscribeToPayments, toCycleId } from "@/lib/firestore/cycles";
 import { uploadProof, getProofUrl } from "@/lib/firestore/payments";
-import { createNotification } from "@/lib/firestore/notifications";
-import type { Subscription, Payment } from "@/lib/types";
+import {
+  createNotification,
+  subscribeToNotifications,
+} from "@/lib/firestore/notifications";
+import type { Subscription, Payment, AppNotification } from "@/lib/types";
+import { formatCreatedAt } from "@/lib/format-date";
 
 interface SubWithPayment {
   sub: Subscription;
@@ -68,12 +73,27 @@ function PendingProofThumbnail({ proofImagePath }: { proofImagePath: string }) {
   );
 }
 
+function extractIndexUrl(message: string): string | null {
+  const m = message.match(/https:\/\/console\.firebase\.google\.com[^\s)]+/);
+  return m ? m[0]! : null;
+}
+
+function isPendingInviteNotif(n: AppNotification): boolean {
+  return (
+    n.type === "membership_invite" &&
+    Boolean(n.inviteToken) &&
+    !n.read
+  );
+}
+
 export default function MemberPayPage() {
-  const { appUser, signOut } = useAuth();
+  const { appUser } = useAuth();
   const [items, setItems] = useState<SubWithPayment[]>([]);
   const [loading, setLoading] = useState(true);
+  const [subsLoadError, setSubsLoadError] = useState<string | null>(null);
   const [uploading, setUploading] = useState<string | null>(null);
   const [uploadError, setUploadError] = useState<Record<string, string>>({});
+  const [pendingInviteCount, setPendingInviteCount] = useState(0);
 
   const cycleId = toCycleId(new Date());
 
@@ -81,22 +101,66 @@ export default function MemberPayPage() {
     if (!appUser) {
       return;
     }
+    return subscribeToNotifications(appUser.uid, (list) => {
+      setPendingInviteCount(list.filter(isPendingInviteNotif).length);
+    });
+  }, [appUser]);
+
+  useEffect(() => {
+    if (!appUser) {
+      return;
+    }
 
     let cancelled = false;
-    const unsubFns: Array<() => void> = [];
+    const paymentUnsubs = new Map<string, () => void>();
 
-    getSubscriptionsForMember(appUser.uid)
-      .then((subs) => {
+    setSubsLoadError(null);
+
+    const clearPaymentListeners = () => {
+      for (const unsub of paymentUnsubs.values()) {
+        unsub();
+      }
+      paymentUnsubs.clear();
+    };
+
+    const unsubSubs = subscribeToSubscriptionsForMember(
+      appUser.uid,
+      (subs) => {
         if (cancelled) {
           return;
         }
+
+        const activeIds = new Set(subs.map((s) => s.id));
+        for (const [id, unsub] of paymentUnsubs) {
+          if (!activeIds.has(id)) {
+            unsub();
+            paymentUnsubs.delete(id);
+          }
+        }
+
+        setItems((prev) => prev.filter((i) => activeIds.has(i.sub.id)));
+
         if (subs.length === 0) {
           setItems([]);
           setLoading(false);
           return;
         }
 
-        subs.forEach((sub) => {
+        for (const sub of subs) {
+          if (paymentUnsubs.has(sub.id)) {
+            // Keep listening; still refresh sub metadata on membership emit.
+            setItems((prev) => {
+              const idx = prev.findIndex((i) => i.sub.id === sub.id);
+              if (idx < 0) {
+                return prev;
+              }
+              const next = [...prev];
+              next[idx] = { ...next[idx]!, sub };
+              return next;
+            });
+            continue;
+          }
+
           const unsub = subscribeToPayments(sub.id, cycleId, (payments) => {
             if (cancelled) {
               return;
@@ -114,18 +178,41 @@ export default function MemberPayPage() {
             });
             setLoading(false);
           });
-          unsubFns.push(unsub);
-        });
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setLoading(false);
+          paymentUnsubs.set(sub.id, unsub);
         }
-      });
+      },
+      (err) => {
+        if (cancelled) {
+          return;
+        }
+        const raw = err.message || String(err);
+        console.error("subscribeToSubscriptionsForMember", err);
+        const indexUrl = extractIndexUrl(raw);
+        if (
+          raw.includes("index") ||
+          raw.includes("Index") ||
+          raw.includes("FAILED_PRECONDITION")
+        ) {
+          setSubsLoadError(
+            indexUrl
+              ? `Firestore needs a one-time index for member lookups. Create it here, wait until it finishes building, then refresh this page: ${indexUrl}`
+              : "Firestore needs an index for member subscriptions (collection group `members` on field `uid`). Deploy `firestore.indexes.json` from this project (`firebase deploy --only firestore:indexes`) or open the link in the browser console error, then refresh.",
+          );
+        } else {
+          setSubsLoadError(
+            raw ||
+              "Could not load your subscriptions. Check your connection and try again.",
+          );
+        }
+        setItems([]);
+        setLoading(false);
+      },
+    );
 
     return () => {
       cancelled = true;
-      unsubFns.forEach((u) => u());
+      unsubSubs();
+      clearPaymentListeners();
     };
   }, [appUser, cycleId]);
 
@@ -169,20 +256,10 @@ export default function MemberPayPage() {
   const firstName = appUser?.displayName?.split(" ")[0] ?? "there";
 
   return (
-    <div className="mx-auto w-full max-w-lg px-4 sm:px-6">
-      <div className="mb-8 flex items-center justify-end">
-        <button
-          type="button"
-          onClick={() => signOut()}
-          className="text-xs font-semibold text-muted transition hover:text-foreground"
-        >
-          Sign out
-        </button>
-      </div>
-
+    <div className="mx-auto w-full max-w-lg px-4 py-6 sm:px-6 sm:py-8" data-testid="member-pay-page">
       <h1 className="pr-page-title">Hey {firstName}</h1>
       <p className="pr-section-lead mb-8">
-        Your subscriptions for {monthLabel}
+        Subscriptions you joined for {monthLabel}
       </p>
 
       {loading ? (
@@ -197,12 +274,45 @@ export default function MemberPayPage() {
             </div>
           ))}
         </div>
+      ) : subsLoadError ? (
+        <div
+          role="alert"
+          className="rounded-2xl border border-amber-500/40 bg-amber-500/10 px-5 py-4 text-left text-sm text-amber-950 dark:text-amber-100"
+        >
+          <p className="font-semibold text-foreground">Couldn&apos;t load subscriptions</p>
+          <p className="mt-2 whitespace-pre-wrap leading-relaxed text-muted">
+            {subsLoadError}
+          </p>
+        </div>
       ) : items.length === 0 ? (
         <div className="pr-card px-6 py-12 text-center shadow-card">
-          <p className="text-sm font-medium text-foreground">
-            You haven&apos;t been added to any subscriptions yet.
-          </p>
-          <p className="mt-2 text-sm text-muted">Ask the owner to invite you.</p>
+          {pendingInviteCount > 0 ? (
+            <>
+              <p className="text-sm font-medium text-foreground">
+                You have {pendingInviteCount} pending invite
+                {pendingInviteCount > 1 ? "s" : ""}.
+              </p>
+              <p className="mt-2 text-sm text-muted">
+                Accept in Notifications to see them here and pay your share.
+              </p>
+              <Link
+                href="/notifications"
+                className="mt-4 inline-flex rounded-xl bg-accent px-4 py-2.5 text-sm font-semibold text-accent-foreground shadow-sm transition hover:brightness-110"
+              >
+                Open Notifications
+              </Link>
+            </>
+          ) : (
+            <>
+              <p className="text-sm font-medium text-foreground">
+                You haven&apos;t been added to any subscriptions yet.
+              </p>
+              <p className="mt-2 text-sm text-muted">
+                When someone invites you, accept from Notifications — then the
+                subscription shows up here.
+              </p>
+            </>
+          )}
         </div>
       ) : (
         <div className="space-y-4">
@@ -230,6 +340,9 @@ export default function MemberPayPage() {
                     <p className="mt-1 text-xs text-muted">
                       Due {sub.dueDayOfMonth}th · $
                       {payment?.amount?.toFixed(2) ?? "—"}
+                      {formatCreatedAt(sub.createdAt)
+                        ? ` · Created ${formatCreatedAt(sub.createdAt)}`
+                        : ""}
                     </p>
                   </div>
                   <span
@@ -306,6 +419,7 @@ export default function MemberPayPage() {
                   <div>
                     <input
                       id={`proof-upload-${sub.id}`}
+                      data-testid={`proof-upload-${sub.id}`}
                       type="file"
                       accept="image/*"
                       className="sr-only"

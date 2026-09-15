@@ -133,7 +133,84 @@ export async function getSubscriptionsForMember(
     ),
   ];
   const subs = await Promise.all(subIds.map((id) => getSubscription(id)));
-  return subs.filter(Boolean) as Subscription[];
+  return (subs.filter(Boolean) as Subscription[]).filter(
+    (s) => s.status !== "cancelled",
+  );
+}
+
+/**
+ * Live membership list for `/pay`: reacts when the member is added/removed
+ * and when a joined subscription is cancelled (status change on the sub doc).
+ */
+export function subscribeToSubscriptionsForMember(
+  uid: string,
+  onData: (subs: Subscription[]) => void,
+  onError?: (err: Error) => void,
+): Unsubscribe {
+  const q = query(collectionGroup(db, "members"), where("uid", "==", uid));
+  const subUnsubs = new Map<string, Unsubscribe>();
+  const latest = new Map<string, Subscription>();
+
+  const emit = () => {
+    onData(
+      [...latest.values()]
+        .filter((s) => s.status !== "cancelled")
+        .sort(
+          (a, b) => subscriptionCreatedAtMs(b) - subscriptionCreatedAtMs(a),
+        ),
+    );
+  };
+
+  const membersUnsub = onSnapshot(
+    q,
+    (snap) => {
+      const subIds = new Set(
+        snap.docs.map((d) => d.ref.parent.parent!.id),
+      );
+
+      for (const [id, unsub] of subUnsubs) {
+        if (!subIds.has(id)) {
+          unsub();
+          subUnsubs.delete(id);
+          latest.delete(id);
+        }
+      }
+      emit();
+
+      for (const subId of subIds) {
+        if (subUnsubs.has(subId)) {
+          continue;
+        }
+        const unsub = onSnapshot(
+          doc(db, "subscriptions", subId),
+          (subSnap) => {
+            if (!subSnap.exists()) {
+              latest.delete(subId);
+              emit();
+              return;
+            }
+            latest.set(subId, {
+              id: subSnap.id,
+              ...subSnap.data(),
+            } as Subscription);
+            emit();
+          },
+          (err) => onError?.(err),
+        );
+        subUnsubs.set(subId, unsub);
+      }
+    },
+    (err) => onError?.(err),
+  );
+
+  return () => {
+    membersUnsub();
+    for (const unsub of subUnsubs.values()) {
+      unsub();
+    }
+    subUnsubs.clear();
+    latest.clear();
+  };
 }
 
 // ─── Create ───────────────────────────────────────────────────────────────────

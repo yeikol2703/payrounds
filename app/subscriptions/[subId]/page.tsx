@@ -1,15 +1,17 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { Timestamp } from "firebase/firestore";
 import { getAuth } from "firebase/auth";
-import { sendInvite } from "@/app/actions/invites";
+import {
+  sendInvite,
+  voidPendingInvitesForSubscription,
+} from "@/app/actions/invites";
 import { useAuth } from "@/lib/auth-context";
 import {
   getSubscriptionWithMembers,
   subscribeToMembers,
-  addMember,
   removeMember,
   cancelSubscription,
 } from "@/lib/firestore/subscriptions";
@@ -25,8 +27,11 @@ import {
   getProofUrl,
 } from "@/lib/firestore/payments";
 import { createNotification } from "@/lib/firestore/notifications";
-import { getAppUserByEmail } from "@/lib/firestore/users";
+import { findUserByEmail } from "@/app/actions/users";
 import type { SubscriptionWithMembers, Payment, Member } from "@/lib/types";
+import { formatCreatedAt } from "@/lib/format-date";
+import { CopyLinkButton } from "@/components/ui/copy-link-button";
+import { useDialogEscape } from "@/components/ui/modal";
 
 function formatUploadedAt(ts: unknown): string {
   if (ts instanceof Timestamp) {
@@ -61,6 +66,9 @@ function ProofModal({
   const [note, setNote] = useState("");
   const [loading, setLoading] = useState(false);
   const [action, setAction] = useState<"confirm" | "reject" | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  useDialogEscape(true, onClose, panelRef);
 
   useEffect(() => {
     if (payment.proofImagePath) {
@@ -73,9 +81,16 @@ function ProofModal({
   async function handleConfirm() {
     setLoading(true);
     setAction("confirm");
+    setActionError(null);
     try {
       await confirmPayment(subId, cycleId, payment.uid);
-      await onAfterConfirm();
+      try {
+        await onAfterConfirm();
+      } catch (err) {
+        console.warn("post-confirm notification failed", err);
+      }
+    } catch (e) {
+      setActionError(e instanceof Error ? e.message : "Confirm failed");
     } finally {
       setLoading(false);
       setAction(null);
@@ -85,9 +100,16 @@ function ProofModal({
   async function handleReject() {
     setLoading(true);
     setAction("reject");
+    setActionError(null);
     try {
       await rejectPayment(subId, cycleId, payment.uid, note);
-      await onAfterReject(note);
+      try {
+        await onAfterReject(note);
+      } catch (err) {
+        console.warn("post-reject notification failed", err);
+      }
+    } catch (e) {
+      setActionError(e instanceof Error ? e.message : "Reject failed");
     } finally {
       setLoading(false);
       setAction(null);
@@ -105,9 +127,13 @@ function ProofModal({
       role="presentation"
     >
       <div
-        className="flex h-full min-h-0 w-full flex-1 flex-col overflow-hidden rounded-none border-0 bg-elevated shadow-none sm:max-h-[90vh] sm:max-w-md sm:flex-none sm:rounded-2xl sm:border sm:border-border sm:shadow-2xl"
+        ref={panelRef}
+        className="flex h-full min-h-0 w-full flex-1 flex-col overflow-hidden rounded-none border-0 bg-elevated shadow-none outline-none sm:max-h-[90vh] sm:max-w-md sm:flex-none sm:rounded-2xl sm:border sm:border-border sm:shadow-2xl"
         role="dialog"
+        aria-modal="true"
         aria-labelledby="proof-modal-title"
+        tabIndex={-1}
+        data-testid="proof-review-modal"
       >
         <div className="flex shrink-0 items-center justify-between border-b border-border px-4 py-3 sm:px-6 sm:py-4">
           <h2
@@ -211,7 +237,8 @@ function ProofModal({
                 htmlFor="reject-note"
                 className="pr-kicker mb-1.5 block"
               >
-                Note for {memberName} (optional)
+                Note for {memberName}{" "}
+                <span className="font-normal text-muted">(optional)</span>
               </label>
               <textarea
                 id="reject-note"
@@ -225,11 +252,46 @@ function ProofModal({
           ) : null}
         </div>
 
-        <div className="flex shrink-0 flex-col gap-2 border-t border-border p-4 sm:flex-row sm:gap-3 sm:px-6 sm:py-4">
+        {/* Confirm first in DOM: primary on top (mobile) and right (sm:flex-row-reverse). */}
+        <div className="flex shrink-0 flex-col gap-2 border-t border-border p-4 sm:flex-row-reverse sm:gap-3 sm:px-6 sm:py-4">
+          {actionError ? (
+            <p
+              role="alert"
+              data-testid="proof-action-error"
+              className="w-full text-xs font-medium text-red-700 dark:text-red-300 sm:order-first sm:basis-full"
+            >
+              {actionError}
+            </p>
+          ) : null}
+          <button
+            type="button"
+            onClick={handleConfirm}
+            disabled={loading}
+            data-testid="proof-confirm"
+            className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-emerald-600 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:brightness-110 disabled:opacity-50"
+          >
+            {loading && action === "confirm" ? (
+              <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/40 border-t-white" />
+            ) : (
+              <svg
+                width="15"
+                height="15"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                aria-hidden
+              >
+                <polyline points="20 6 9 17 4 12" />
+              </svg>
+            )}
+            Confirm payment
+          </button>
           <button
             type="button"
             onClick={handleReject}
             disabled={loading}
+            data-testid="proof-reject"
             className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-red-300/50 bg-red-500/10 py-2.5 text-sm font-semibold text-red-800 transition hover:bg-red-500/20 disabled:opacity-50 dark:text-red-200"
           >
             {loading && action === "reject" ? (
@@ -250,29 +312,6 @@ function ProofModal({
             )}
             Reject
           </button>
-          <button
-            type="button"
-            onClick={handleConfirm}
-            disabled={loading}
-            className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-emerald-600 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:brightness-110 disabled:opacity-50"
-          >
-            {loading && action === "confirm" ? (
-              <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/40 border-t-white" />
-            ) : (
-              <svg
-                width="15"
-                height="15"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                aria-hidden
-              >
-                <polyline points="20 6 9 17 4 12" />
-              </svg>
-            )}
-            Confirm payment
-          </button>
         </div>
       </div>
     </div>
@@ -288,6 +327,9 @@ function CancelSubscriptionConfirmModal({
   onConfirm: () => void | Promise<void>;
   loading: boolean;
 }) {
+  const panelRef = useRef<HTMLDivElement>(null);
+  useDialogEscape(true, onClose, panelRef);
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-foreground/50 p-4 backdrop-blur-sm"
@@ -299,9 +341,12 @@ function CancelSubscriptionConfirmModal({
       role="presentation"
     >
       <div
-        className="w-full max-w-md rounded-2xl border border-border bg-elevated shadow-2xl"
+        ref={panelRef}
+        className="w-full max-w-md rounded-2xl border border-border bg-elevated shadow-2xl outline-none"
         role="dialog"
+        aria-modal="true"
         aria-labelledby="cancel-sub-title"
+        tabIndex={-1}
       >
         <div className="border-b border-border px-6 py-4">
           <h2
@@ -314,7 +359,7 @@ function CancelSubscriptionConfirmModal({
         <div className="px-6 py-5">
           <p className="text-sm leading-relaxed text-muted">
             Are you sure? This will cancel the subscription. Current month
-            history will be kept.
+            history will be kept. Pending invites will also be voided.
           </p>
         </div>
         <div className="flex gap-3 border-t border-border px-6 py-4">
@@ -354,6 +399,9 @@ function RemoveMemberConfirmModal({
   onConfirm: () => void | Promise<void>;
   loading: boolean;
 }) {
+  const panelRef = useRef<HTMLDivElement>(null);
+  useDialogEscape(true, onClose, panelRef);
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-foreground/50 p-4 backdrop-blur-sm"
@@ -365,9 +413,12 @@ function RemoveMemberConfirmModal({
       role="presentation"
     >
       <div
-        className="w-full max-w-md rounded-2xl border border-border bg-elevated shadow-2xl"
+        ref={panelRef}
+        className="w-full max-w-md rounded-2xl border border-border bg-elevated shadow-2xl outline-none"
         role="dialog"
+        aria-modal="true"
         aria-labelledby="remove-member-title"
+        tabIndex={-1}
       >
         <div className="border-b border-border px-6 py-4">
           <h2
@@ -426,12 +477,15 @@ function AddMemberModal({
   const [email, setEmail] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [addedRegistered, setAddedRegistered] = useState(false);
   const [inviteShare, setInviteShare] = useState<{
     url: string;
     email: string;
     emailSent: boolean;
+    emailFailureReason?: string;
+    inAppNotified?: boolean;
   } | null>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  useDialogEscape(true, onClose, panelRef);
 
   const appBase =
     process.env.NEXT_PUBLIC_APP_URL?.replace(/\/$/, "") ||
@@ -442,7 +496,6 @@ function AddMemberModal({
     e.preventDefault();
     setError("");
     setInviteShare(null);
-    setAddedRegistered(false);
     const trimmed = email.trim().toLowerCase();
     if (!trimmed.includes("@")) {
       setError("Enter a valid email address.");
@@ -459,37 +512,53 @@ function AddMemberModal({
 
     setLoading(true);
     try {
-      const user = await getAppUserByEmail(trimmed);
-      if (user) {
-        if (user.uid === ownerId) {
-          setError("That account is you — invite someone else.");
-          return;
-        }
-        await addMember(subId, {
-          uid: user.uid,
-          email: user.email ?? trimmed,
-          displayName:
-            user.displayName?.trim() || trimmed.split("@")[0] || trimmed,
-        });
-        await syncPaymentsForCurrentCycle(subId);
-        setAddedRegistered(true);
-      } else {
-        const idToken = await getAuth().currentUser?.getIdToken(true);
-        if (!idToken) {
-          setError("Could not verify your session. Try signing in again.");
-          return;
-        }
-        const { token, emailSent } = await sendInvite(
-          idToken,
-          trimmed,
-          subId,
-          sub.name,
-          ownerDisplayName,
-          ownerId,
-        );
-        const url = `${appBase}/invite/${token}`;
-        setInviteShare({ url, email: trimmed, emailSent });
+      const idToken = await getAuth().currentUser?.getIdToken(true);
+      if (!idToken) {
+        setError("Could not verify your session. Try signing in again.");
+        return;
       }
+
+      // Always create an invite — member must accept before they appear on the sub.
+      const user = await findUserByEmail(idToken, trimmed);
+      if (user?.uid === ownerId) {
+        setError("That account is you — invite someone else.");
+        return;
+      }
+
+      const { token, emailSent, emailFailureReason } = await sendInvite(
+        idToken,
+        trimmed,
+        subId,
+        sub.name,
+        ownerDisplayName,
+        ownerId,
+      );
+      const url = `${appBase}/invite/${token}`;
+
+      if (user) {
+        try {
+          await createNotification({
+            recipientUid: user.uid,
+            type: "membership_invite",
+            subId,
+            subName: sub.name,
+            cycleId: toCycleId(new Date()),
+            fromUid: ownerId,
+            fromDisplayName: ownerDisplayName,
+            inviteToken: token,
+          });
+        } catch (notifErr) {
+          console.warn("membership_invite notification failed", notifErr);
+        }
+      }
+
+      setInviteShare({
+        url,
+        email: trimmed,
+        emailSent: Boolean(user) || emailSent,
+        emailFailureReason: user ? undefined : emailFailureReason,
+        inAppNotified: Boolean(user),
+      });
     } catch (err: unknown) {
       setError(
         err instanceof Error ? err.message : "Something went wrong. Try again.",
@@ -516,9 +585,12 @@ function AddMemberModal({
       role="presentation"
     >
       <div
-        className="max-h-[90vh] w-full max-w-md overflow-y-auto rounded-2xl border border-border bg-elevated shadow-2xl"
+        ref={panelRef}
+        className="max-h-[90vh] w-full max-w-md overflow-y-auto rounded-2xl border border-border bg-elevated shadow-2xl outline-none"
         role="dialog"
+        aria-modal="true"
         aria-labelledby="add-member-title"
+        tabIndex={-1}
       >
         <div className="flex items-center justify-between border-b border-border px-6 py-4">
           <h2
@@ -549,44 +621,38 @@ function AddMemberModal({
         </div>
 
         <div className="space-y-5 p-6">
-          {addedRegistered ? (
-            <div className="space-y-4">
-              <p className="text-sm font-medium text-emerald-800 dark:text-emerald-200">
-                They’ve been added to this subscription. Their share was
-                recalculated for everyone.
-              </p>
-              <button
-                type="button"
-                onClick={onClose}
-                className="pr-btn-primary w-full py-3"
-              >
-                Done
-              </button>
-            </div>
-          ) : inviteShare ? (
+          {inviteShare ? (
             <div className="space-y-4">
               <p className="text-sm text-muted">
-                {inviteShare.emailSent
-                  ? "We sent them an invite email. You can also share the link manually."
-                  : "We couldn’t send the invite email (for example, deliverability limits). Copy the link and send it to them."}
+                {inviteShare.inAppNotified
+                  ? "They’ll see an invite in Notifications and must accept before joining. You can also share the link."
+                  : inviteShare.emailSent
+                    ? "We sent them an invite email. They must accept before they appear on this subscription. You can also share the link."
+                    : "We couldn’t send the invite email automatically. Copy the link and send it to them (for example by WhatsApp). They must accept before joining."}
               </p>
+              {!inviteShare.emailSent && inviteShare.emailFailureReason ? (
+                <p
+                  role="status"
+                  className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-950 dark:text-amber-100"
+                >
+                  {inviteShare.emailFailureReason}
+                </p>
+              ) : null}
               <div>
                 <p className="mb-2 text-xs font-medium text-muted">
                   {inviteShare.email}
                 </p>
                 <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-                  <code className="flex-1 break-all rounded-lg bg-elevated-muted px-3 py-2 text-xs text-foreground">
+                  <code
+                    data-testid="invite-share-url"
+                    className="flex-1 break-all rounded-lg bg-elevated-muted px-3 py-2 text-xs text-foreground"
+                  >
                     {inviteShare.url}
                   </code>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      void navigator.clipboard.writeText(inviteShare.url)
-                    }
-                    className="shrink-0 rounded-xl border border-border bg-elevated px-3 py-2 text-xs font-semibold text-foreground shadow-sm transition hover:bg-elevated-muted"
-                  >
-                    Copy link
-                  </button>
+                  <CopyLinkButton
+                    text={inviteShare.url}
+                    data-testid="invite-copy-link"
+                  />
                 </div>
               </div>
               <a
@@ -651,6 +717,7 @@ function AddMemberModal({
                 <button
                   type="submit"
                   disabled={loading}
+                  data-testid="add-member-submit"
                   className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-accent py-2.5 text-sm font-semibold text-accent-foreground shadow-sm transition hover:brightness-110 disabled:opacity-50"
                 >
                   {loading ? (
@@ -730,12 +797,47 @@ export default function SubscriptionDetailPage() {
   }
 
   async function handleConfirmCancelSubscription() {
-    if (!subId) {
+    if (!subId || !appUser || !sub) {
       return;
     }
     setCancelling(true);
     try {
+      const membersSnapshot = [...sub.members];
+      const idToken = await getAuth().currentUser?.getIdToken(true);
+      let pendingInviteeUids: string[] = [];
+      if (idToken) {
+        try {
+          const voided = await voidPendingInvitesForSubscription(
+            idToken,
+            subId,
+          );
+          pendingInviteeUids = voided.inviteeUids;
+        } catch (err) {
+          console.warn("void pending invites failed", err);
+        }
+      }
+
       await cancelSubscription(subId);
+      const cycle = cycleId;
+      const notifyUids = new Set([
+        ...membersSnapshot.map((m) => m.uid),
+        ...pendingInviteeUids,
+      ]);
+      await Promise.all(
+        [...notifyUids].map((uid) =>
+          createNotification({
+            recipientUid: uid,
+            type: "subscription_cancelled",
+            subId,
+            subName: sub.name,
+            cycleId: cycle,
+            fromUid: appUser.uid,
+            fromDisplayName: appUser.displayName,
+          }).catch((err) => {
+            console.warn("cancel notification failed", uid, err);
+          }),
+        ),
+      );
       router.push("/dashboard");
     } finally {
       setCancelling(false);
@@ -761,16 +863,19 @@ export default function SubscriptionDetailPage() {
     if (!appUser || !sub || !payment) {
       return;
     }
-    await createNotification({
-      recipientUid: payment.uid,
-      type: "payment_confirmed",
-      subId,
-      subName: sub.name,
-      cycleId,
-      fromUid: appUser.uid,
-      fromDisplayName: appUser.displayName,
-    });
-    setReviewPayment(null);
+    try {
+      await createNotification({
+        recipientUid: payment.uid,
+        type: "payment_confirmed",
+        subId,
+        subName: sub.name,
+        cycleId,
+        fromUid: appUser.uid,
+        fromDisplayName: appUser.displayName,
+      });
+    } finally {
+      setReviewPayment(null);
+    }
   }, [appUser, sub, subId, cycleId, reviewPayment]);
 
   const handleAfterReject = useCallback(
@@ -779,17 +884,21 @@ export default function SubscriptionDetailPage() {
       if (!appUser || !sub || !payment) {
         return;
       }
-      await createNotification({
-        recipientUid: payment.uid,
-        type: "payment_rejected",
-        subId,
-        subName: sub.name,
-        cycleId,
-        fromUid: appUser.uid,
-        fromDisplayName: appUser.displayName,
-        detail: rejectionNote.trim() ? rejectionNote.trim() : undefined,
-      });
-      setReviewPayment(null);
+      const detail = rejectionNote.trim();
+      try {
+        await createNotification({
+          recipientUid: payment.uid,
+          type: "payment_rejected",
+          subId,
+          subName: sub.name,
+          cycleId,
+          fromUid: appUser.uid,
+          fromDisplayName: appUser.displayName,
+          ...(detail ? { detail } : {}),
+        });
+      } finally {
+        setReviewPayment(null);
+      }
     },
     [appUser, sub, subId, cycleId, reviewPayment],
   );
@@ -858,6 +967,7 @@ export default function SubscriptionDetailPage() {
             {isOwner && sub.status === "active" ? (
               <button
                 type="button"
+                data-testid="add-member-open"
                 onClick={() => setShowAddMember(true)}
                 className="rounded-lg border border-border bg-elevated px-3 py-1.5 text-xs font-semibold text-foreground shadow-sm transition hover:bg-elevated-muted"
               >
@@ -868,6 +978,9 @@ export default function SubscriptionDetailPage() {
           <p className="pr-section-lead">
             ${sub.totalCost.toFixed(2)}/mo · due {sub.dueDayOfMonth}th ·{" "}
             {sub.members.length} members
+            {formatCreatedAt(sub.createdAt)
+              ? ` · created ${formatCreatedAt(sub.createdAt)}`
+              : ""}
           </p>
         </div>
         {allConfirmed ? (
@@ -891,6 +1004,7 @@ export default function SubscriptionDetailPage() {
           <button
             type="button"
             onClick={() => setReviewPayment(pendingReview[0]!)}
+            data-testid="proof-review-banner-open"
             className="rounded-xl bg-elevated px-3 py-2 text-xs font-semibold text-accent shadow-sm transition hover:brightness-110 dark:text-blue-700"
           >
             Review
@@ -944,6 +1058,7 @@ export default function SubscriptionDetailPage() {
                     <button
                       type="button"
                       onClick={() => setReviewPayment(payment)}
+                      data-testid={`proof-view-${m.uid}`}
                       className="text-xs font-semibold text-accent underline-offset-2 hover:underline dark:text-blue-300"
                     >
                       View proof

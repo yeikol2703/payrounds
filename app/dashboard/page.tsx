@@ -10,6 +10,7 @@ import {
 } from "@/lib/firestore/subscriptions";
 import { listPaymentsForCycle } from "@/lib/firestore/payments";
 import type { Subscription, Member, Payment } from "@/lib/types";
+import { formatCreatedAt } from "@/lib/format-date";
 
 interface SubCardData {
   sub: Subscription;
@@ -271,6 +272,9 @@ export default function DashboardPage() {
                         {(sub.totalCost / (members.length + 1)).toFixed(2)} /
                         person
                       </span>
+                      {formatCreatedAt(sub.createdAt) ? (
+                        <span>Created {formatCreatedAt(sub.createdAt)}</span>
+                      ) : null}
                     </div>
                   </div>
                   <span

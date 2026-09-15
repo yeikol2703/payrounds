@@ -3,6 +3,8 @@ import type { Timestamp } from "firebase/firestore";
 // ─── Users ────────────────────────────────────────────────────────────────────
 
 export type UserRole = "owner" | "member";
+// Legacy field on `/users/{uid}`. Routing uses Admin/Member workspace tabs instead:
+// Admin = subscriptions you own; Member = subscriptions you joined.
 
 export interface AppUser {
   uid: string;
@@ -75,7 +77,9 @@ export type NotificationType =
   | "payment_confirmed"
   | "payment_rejected"
   | "deadline_reminder"
-  | "cycle_closed";
+  | "cycle_closed"
+  | "membership_invite"
+  | "subscription_cancelled";
 
 export interface AppNotification {
   id: string;
@@ -89,6 +93,8 @@ export interface AppNotification {
   createdAt: Timestamp;
   /** Owner rejection text for `payment_rejected`, etc. */
   detail?: string | null;
+  /** Invite token for `membership_invite` — required to accept from notifications. */
+  inviteToken?: string | null;
 }
 
 // ─── Composite / UI types ─────────────────────────────────────────────────────
@@ -117,4 +123,6 @@ export interface PendingInvite {
   ownerDisplayName: string;
   expiresAt: Timestamp;
   accepted: boolean;
+  /** Member declined from notifications inbox. */
+  declined?: boolean;
 }

@@ -3,6 +3,7 @@
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
+import { getStoredWorkspaceMode } from "@/lib/workspace-mode";
 
 export default function RootPage() {
   const { appUser, loading } = useAuth();
@@ -14,11 +15,10 @@ export default function RootPage() {
     }
     if (!appUser) {
       router.replace("/login");
-    } else if (appUser.role === "owner") {
-      router.replace("/dashboard");
-    } else {
-      router.replace("/pay");
+      return;
     }
+    const mode = getStoredWorkspaceMode();
+    router.replace(mode === "member" ? "/pay" : "/dashboard");
   }, [appUser, loading, router]);
 
   return (

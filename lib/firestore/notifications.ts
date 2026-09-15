@@ -51,6 +51,8 @@ export interface CreateNotificationInput {
   fromDisplayName: string;
   /** Optional body line (e.g. rejection note for `payment_rejected`). */
   detail?: string | null;
+  /** Required for `membership_invite` accept from the notifications inbox. */
+  inviteToken?: string | null;
 }
 
 export async function createNotification(
@@ -68,6 +70,9 @@ export async function createNotification(
     ...(input.detail != null && input.detail !== ""
       ? { detail: input.detail }
       : {}),
+    ...(input.inviteToken
+      ? { inviteToken: input.inviteToken }
+      : {}),
   });
 }
 
@@ -83,7 +88,18 @@ export async function markAllAsRead(uid: string): Promise<void> {
   }
 
   const batch = writeBatch(db);
-  snap.docs.forEach((d) => batch.update(d.ref, { read: true }));
+  let updates = 0;
+  snap.docs.forEach((d) => {
+    // Keep membership invites actionable until Accept / Decline.
+    if (d.data().type === "membership_invite") {
+      return;
+    }
+    batch.update(d.ref, { read: true });
+    updates += 1;
+  });
+  if (updates === 0) {
+    return;
+  }
   await batch.commit();
 }
 

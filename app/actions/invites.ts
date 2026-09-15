@@ -74,6 +74,14 @@ export async function getInvitePublic(
         invitedEmail: data.invitedEmail ?? "",
       };
     }
+    if (data.declined) {
+      return {
+        status: "expired",
+        subName: data.subName ?? "",
+        ownerDisplayName: data.ownerDisplayName ?? "",
+        invitedEmail: data.invitedEmail ?? "",
+      };
+    }
 
     return {
       status: "valid",
@@ -98,6 +106,13 @@ export async function getInvitePublic(
  * If email fails (e.g. Resend test limits) or Resend is not configured, the invite
  * document is still written and `emailSent` is false so the client can show the link.
  */
+export type SendInviteResult = {
+  token: string;
+  emailSent: boolean;
+  /** When `emailSent` is false, short reason for the UI (Resend / env). */
+  emailFailureReason?: string;
+};
+
 export async function sendInvite(
   idToken: string,
   email: string,
@@ -105,7 +120,7 @@ export async function sendInvite(
   subName: string,
   ownerDisplayName: string,
   ownerId: string,
-): Promise<{ token: string; emailSent: boolean }> {
+): Promise<SendInviteResult> {
   const invitedEmail = email.trim().toLowerCase();
   if (!invitedEmail.includes("@")) {
     throw new Error("Invalid email");
@@ -153,7 +168,12 @@ export async function sendInvite(
       "sendInvite: RESEND_API_KEY is not configured; invite saved without email",
       { subId, invitedEmail },
     );
-    return { token, emailSent: false };
+    return {
+      token,
+      emailSent: false,
+      emailFailureReason:
+        "Automatic email is disabled: add RESEND_API_KEY (and optionally RESEND_FROM_EMAIL) to the server environment, then redeploy.",
+    };
   }
 
   const resend = new Resend(apiKey);
@@ -168,26 +188,32 @@ export async function sendInvite(
       html: `
       <p>Hi,</p>
       <p><strong>${ownerDisplayName.trim()}</strong> invited you to split <strong>${subName.trim()}</strong> on Payround.</p>
-      <p><a href="${inviteUrl}">Open your invite</a> (link expires in 72 hours).</p>
+      <p><a href="${inviteUrl}">Open your invite</a> to create your account with email and password (link expires in 72 hours).</p>
       <p style="color:#64748b;font-size:12px;">If you did not expect this, you can ignore this email.</p>
     `,
     });
 
     if (error) {
+      const reason =
+        typeof (error as { message?: string }).message === "string"
+          ? (error as { message: string }).message
+          : "Resend rejected the send request.";
       console.error("sendInvite: Resend returned an error (invite still created)", {
         subId,
         invitedEmail,
         error,
       });
-      return { token, emailSent: false };
+      return { token, emailSent: false, emailFailureReason: reason };
     }
   } catch (e) {
+    const reason =
+      e instanceof Error ? e.message : "Resend request failed unexpectedly.";
     console.error("sendInvite: Resend send threw (invite still created)", {
       subId,
       invitedEmail,
       e,
     });
-    return { token, emailSent: false };
+    return { token, emailSent: false, emailFailureReason: reason };
   }
 
   return { token, emailSent: true };
@@ -229,6 +255,9 @@ export async function acceptInviteJoin(
   const invite = invSnap.data() as Omit<PendingInvite, "id">;
   if (invite.accepted) {
     return { ok: false, error: "already_accepted" };
+  }
+  if (invite.declined) {
+    return { ok: false, error: "This invite was declined" };
   }
 
   const exp = invite.expiresAt as admin.firestore.Timestamp | undefined;
@@ -274,6 +303,9 @@ export async function acceptInviteJoin(
         const invData = invDoc.data() as Omit<PendingInvite, "id">;
         if (invData.accepted) {
           throw new Error("already_accepted");
+        }
+        if (invData.declined) {
+          throw new Error("This invite was declined");
         }
 
         const subDoc = await tx.get(subRef);
@@ -330,6 +362,111 @@ export async function acceptInviteJoin(
   }
 
   return { ok: false, error: "Could not join subscription" };
+}
+
+/**
+ * Owner cancels a subscription: void open invites and return registered
+ * invitee uids so the client can notify them in-app.
+ */
+export async function voidPendingInvitesForSubscription(
+  idToken: string,
+  subId: string,
+): Promise<{ inviteeUids: string[] }> {
+  const decoded = await verifyPayroundIdToken(idToken);
+  const ownerId = decoded.uid;
+  if (!ownerId || !subId?.trim()) {
+    throw new Error("Not authorized");
+  }
+
+  const db = getAdminFirestore();
+  const subSnap = await db.collection("subscriptions").doc(subId).get();
+  if (!subSnap.exists) {
+    throw new Error("Subscription not found");
+  }
+  const sub = subSnap.data() as Subscription;
+  if (sub.ownerId !== ownerId) {
+    throw new Error("Not authorized");
+  }
+
+  const inviteSnap = await db
+    .collection("invites")
+    .where("subId", "==", subId)
+    .where("accepted", "==", false)
+    .get();
+
+  const inviteeUids = new Set<string>();
+  const batch = db.batch();
+  let ops = 0;
+
+  for (const inv of inviteSnap.docs) {
+    const data = inv.data() as Omit<PendingInvite, "id">;
+    if (data.declined) {
+      continue;
+    }
+    batch.update(inv.ref, { declined: true });
+    ops += 1;
+
+    const email = (data.invitedEmail ?? "").trim().toLowerCase();
+    if (!email.includes("@")) {
+      continue;
+    }
+    const userSnap = await db
+      .collection("users")
+      .where("email", "==", email)
+      .limit(1)
+      .get();
+    if (!userSnap.empty) {
+      inviteeUids.add(userSnap.docs[0]!.id);
+    }
+  }
+
+  if (ops > 0) {
+    await batch.commit();
+  }
+
+  return { inviteeUids: [...inviteeUids] };
+}
+
+/**
+ * Member declines a pending invite from the notifications inbox.
+ */
+export async function declineInviteJoin(
+  token: string,
+  idToken: string,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  if (!token?.trim()) {
+    return { ok: false, error: "Missing invite token" };
+  }
+
+  let decoded: admin.auth.DecodedIdToken;
+  try {
+    decoded = await verifyPayroundIdToken(idToken);
+  } catch {
+    return { ok: false, error: "Invalid session" };
+  }
+
+  const email = (decoded.email ?? "").toLowerCase();
+  if (!email) {
+    return { ok: false, error: "Your account has no email on file" };
+  }
+
+  const db = getAdminFirestore();
+  const invRef = inviteRef(db, token);
+  const invSnap = await invRef.get();
+  if (!invSnap.exists) {
+    return { ok: false, error: "Invite not found" };
+  }
+
+  const invite = invSnap.data() as Omit<PendingInvite, "id">;
+  if (invite.accepted) {
+    return { ok: false, error: "Invite already accepted" };
+  }
+  if (invite.invitedEmail !== email) {
+    return { ok: false, error: "This invite is for a different email" };
+  }
+
+  await invRef.update({ declined: true });
+  return { ok: true };
 }
 
 async function syncCyclePaymentsForMembers(
