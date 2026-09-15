@@ -56,7 +56,8 @@ function buildEmulatorConfig(): Record<string, string> {
   };
 }
 
-function useEmulators(): boolean {
+/** Named without a `use` prefix — not a React Hook (ESLint rules-of-hooks). */
+function emulatorsEnabled(): boolean {
   return process.env.NEXT_PUBLIC_USE_FIREBASE_EMULATOR === "true";
 }
 
@@ -65,7 +66,7 @@ function getFirebaseApp(): FirebaseApp {
   if (getApps().length > 0) {
     return getApp();
   }
-  if (useEmulators()) {
+  if (emulatorsEnabled()) {
     return initializeApp(buildEmulatorConfig());
   }
   if (hasFirebaseConfig()) {
@@ -82,7 +83,7 @@ function getFirebaseApp(): FirebaseApp {
 }
 
 function createFirestore(appInstance: FirebaseApp): Firestore {
-  if (useEmulators()) {
+  if (emulatorsEnabled()) {
     // WebChannel against Docker-mapped Firestore often evaluates rules as
     // unauthenticated; long polling keeps Auth tokens attached reliably.
     try {
@@ -105,7 +106,7 @@ let emulatorsConnected = false;
 let storageEmulatorConnected = false;
 
 function connectEmulatorsOnce(): void {
-  if (emulatorsConnected || !useEmulators()) {
+  if (emulatorsConnected || !emulatorsEnabled()) {
     return;
   }
   const authHost =
@@ -142,7 +143,7 @@ export default app;
 let storageSingleton: FirebaseStorage | null = null;
 
 export function isFirebaseConfigured(): boolean {
-  return useEmulators() || hasFirebaseConfig();
+  return emulatorsEnabled() || hasFirebaseConfig();
 }
 
 export function getFirebaseAuth(): Auth {
@@ -156,7 +157,7 @@ export function getDb(): Firestore {
 export function getFirebaseStorage(): FirebaseStorage {
   if (!storageSingleton) {
     storageSingleton = getStorage(getFirebaseApp());
-    if (useEmulators() && !storageEmulatorConnected) {
+    if (emulatorsEnabled() && !storageEmulatorConnected) {
       const host =
         process.env.NEXT_PUBLIC_FIREBASE_STORAGE_EMULATOR_HOST?.trim() ||
         "127.0.0.1";

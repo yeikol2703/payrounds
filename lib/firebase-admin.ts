@@ -74,7 +74,8 @@ function parseServiceAccount(): ServiceAccountJson | null {
   return null;
 }
 
-function useFirebaseEmulators(): boolean {
+/** Named without a `use` prefix — not a React Hook (ESLint rules-of-hooks). */
+function firebaseAdminEmulatorsEnabled(): boolean {
   return (
     process.env.NEXT_PUBLIC_USE_FIREBASE_EMULATOR === "true" ||
     Boolean(process.env.FIRESTORE_EMULATOR_HOST?.trim()) ||
@@ -118,7 +119,7 @@ export function getFirebaseAdminApp(): admin.app.App {
     return admin.app();
   }
 
-  if (useFirebaseEmulators()) {
+  if (firebaseAdminEmulatorsEnabled()) {
     const projectId = ensureEmulatorEnv();
     admin.initializeApp({ projectId });
     initialized = true;
