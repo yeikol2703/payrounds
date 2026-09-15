@@ -6,13 +6,19 @@ service cloud.firestore {
       allow read, write: if request.auth != null && request.auth.uid == uid;
 
       match /notifications/{notifId} {
-        allow read, write: if request.auth != null && request.auth.uid == uid;
+        // Recipient can read/update/delete their own inbox.
+        allow read, update, delete: if request.auth != null
+          && request.auth.uid == uid;
+        // Anyone authenticated may create a notification for another user
+        // only as the sender (owners confirming payments, members uploading proof, etc.).
+        allow create: if request.auth != null
+          && request.resource.data.fromUid == request.auth.uid
+          && request.resource.data.read == false;
       }
     }
 
     match /subscriptions/{subId} {
-      // Do not use isOwner() here — it calls get() on this same document and causes
-      // circular rule evaluation, which breaks owner reads/transactions (e.g. addMember).
+      // Do not use isOwner() here — get() on this same doc causes circular evaluation.
       allow read: if request.auth != null && (
         resource.data.ownerId == request.auth.uid
         || exists(/databases/$(database)/documents/subscriptions/$(subId)/members/$(request.auth.uid))
@@ -21,7 +27,12 @@ service cloud.firestore {
       allow update, delete: if isOwner(subId);
 
       match /members/{memberUid} {
-        allow read: if isOwner(subId) || isMember(subId);
+        // resource.data.uid == auth.uid is required so collectionGroup("members")
+        // queries with where("uid","==",auth.uid) are allowed.
+        allow read: if request.auth != null && (
+          resource.data.uid == request.auth.uid
+          || isOwner(subId)
+        );
         allow write: if isOwner(subId);
       }
 
@@ -31,12 +42,20 @@ service cloud.firestore {
 
         match /payments/{paymentUid} {
           allow read: if isOwner(subId) || isMember(subId);
-          allow update: if request.auth != null
-            && request.auth.uid == paymentUid
-            && isMember(subId);
+          // Member uploads proof on their own payment; owner confirms / rejects.
+          allow update: if request.auth != null && (
+            (request.auth.uid == paymentUid && isMember(subId))
+            || isOwner(subId)
+          );
           allow create, delete: if isOwner(subId);
         }
       }
+    }
+
+    // Explicit collection-group path (same field constraint as the client query).
+    match /{path=**}/members/{memberUid} {
+      allow read: if request.auth != null
+        && resource.data.uid == request.auth.uid;
     }
 
     function isOwner(subId) {

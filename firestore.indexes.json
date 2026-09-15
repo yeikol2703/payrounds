@@ -1,15 +1,27 @@
 {
-  "indexes": [
+  "indexes": [],
+  "fieldOverrides": [
     {
-      "collectionGroup": "payments",
-      "queryScope": "COLLECTION_GROUP",
-      "fields": [
+      "collectionGroup": "members",
+      "fieldPath": "uid",
+      "indexes": [
         {
-          "fieldPath": "proofUploadedAt",
-          "order": "ASCENDING"
+          "order": "ASCENDING",
+          "queryScope": "COLLECTION"
+        },
+        {
+          "order": "ASCENDING",
+          "queryScope": "COLLECTION_GROUP"
+        },
+        {
+          "order": "DESCENDING",
+          "queryScope": "COLLECTION"
+        },
+        {
+          "arrayConfig": "CONTAINS",
+          "queryScope": "COLLECTION"
         }
       ]
     }
-  ],
-  "fieldOverrides": []
+  ]
 }
