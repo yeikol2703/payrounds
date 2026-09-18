@@ -155,6 +155,7 @@ async function main() {
     totalCost: num(15.99),
     dueDayOfMonth: int(15),
     status: str("active"),
+    splitMode: str("equal"),
     createdAt: ts(),
   });
 
@@ -187,6 +188,24 @@ async function main() {
       amount: num(amountOwed),
     },
   );
+
+  // Second owner-only sub for bulk-cancel e2e (no members).
+  const subId2 = "sub-demo-spotify";
+  await upsertDoc(`subscriptions/${subId2}`, {
+    ownerId: str(owner.localId),
+    name: str("Spotify Duo"),
+    totalCost: num(9.99),
+    dueDayOfMonth: int(1),
+    status: str("active"),
+    splitMode: str("equal"),
+    createdAt: ts(),
+  });
+  await upsertDoc(`subscriptions/${subId2}/cycles/${cycleId}`, {
+    status: str("open"),
+    dueDate: ts(new Date(now.getFullYear(), now.getMonth(), 1)),
+    closedAt: nullVal(),
+    closedBy: nullVal(),
+  });
 
   console.log(
     JSON.stringify(

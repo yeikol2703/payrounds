@@ -9,6 +9,43 @@ Subscription cost-sharing tracker. Share Netflix, Spotify, and other subscriptio
 - **Email**: Resend
 - **Deploy**: Vercel
 
+## Design system
+
+- `DESIGN.md` — Payround visual language (Wise-inspired via [awesome-design-md](https://github.com/voltagent/awesome-design-md))
+- `framer-motion` — page/list enter via `@/components/motion`
+- Tokens live in `app/globals.css` (sage canvas, lime CTAs)
+
+## App navigation (local / prod)
+
+- **Admin sidebar:** Panel, Suscripciones, Estadísticas, Amigos, Notificaciones
+- **Member sidebar:** Mis pagos, Notificaciones
+- **Footer (both):** tema Claro/Oscuro/Auto · Ajustes · Cerrar sesión
+- Legacy `/account` redirects to `/settings`
+
+## Local development (Docker emulators only)
+
+Day-to-day local work **must** use Firebase emulators via Docker — not production Firebase.
+
+```bash
+npm run local
+```
+
+This will:
+
+1. Start Auth / Firestore / Storage (`docker-compose.emulators.yml`)
+2. Wait until ports `9099`, `8181`, `9199` are up
+3. Seed `owner@payround.test` / `member@payround.test` (`testpass123`)
+4. Run Next on **http://127.0.0.1:3002** with `.env.emulator` mirrored to `.env.development.local`
+
+You should see a yellow **LOCAL EMULATOR** banner in the app.
+
+```bash
+npm run test:e2e:emulator   # full Playwright against emulators
+npm run emulator:down       # stop Docker
+```
+
+Do **not** use `npm run dev` with production `.env.local` for feature work unless you intentionally want prod data.
+
 ## Setup
 
 ### Auth routes (`payrounds-v2` merged)

@@ -31,9 +31,9 @@ async function waitForUrl(url, attempts = 60) {
   for (let i = 0; i < attempts; i++) {
     try {
       const res = await fetch(url);
-      if (res.ok || res.status === 404 || res.status === 400) {
-        return;
-      }
+      // Any HTTP response means the port is open (Storage often returns 501).
+      void res.status;
+      return;
     } catch {
       // retry
     }
@@ -105,9 +105,9 @@ try {
 
   await waitForUrl(`http://127.0.0.1:${nextPort}`);
 
-  console.log("\n=== 5) Playwright (smoke + invite + proof upload) ===");
+  console.log("\n=== 5) Playwright (smoke + invite + proof + dashboard + account) ===");
   run(
-    "npx playwright test --project=chromium e2e/smoke.spec.ts e2e/member-invite.emulator.spec.ts e2e/invite-accept.emulator.spec.ts e2e/proof-upload.emulator.spec.ts",
+    "npx playwright test --project=chromium e2e/smoke.spec.ts e2e/member-invite.emulator.spec.ts e2e/invite-accept.emulator.spec.ts e2e/proof-upload.emulator.spec.ts e2e/dashboard-views.emulator.spec.ts e2e/dashboard-bulk-cancel.emulator.spec.ts e2e/custom-split.emulator.spec.ts e2e/member-roster.emulator.spec.ts e2e/account-i18n.emulator.spec.ts",
     { env },
   );
 
