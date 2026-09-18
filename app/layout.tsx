@@ -1,13 +1,22 @@
 import type { Metadata } from "next";
-import { Plus_Jakarta_Sans } from "next/font/google";
+import { Manrope, Syne } from "next/font/google";
 import Script from "next/script";
 import "./globals.css";
 import { AuthProvider } from "@/lib/auth-context";
+import { I18nProvider } from "@/lib/i18n";
+import { EmulatorBanner } from "@/components/emulator-banner";
 
-const sans = Plus_Jakarta_Sans({
+const sans = Manrope({
   subsets: ["latin"],
   variable: "--font-sans",
   display: "swap",
+});
+
+const display = Syne({
+  subsets: ["latin"],
+  variable: "--font-display",
+  display: "swap",
+  weight: ["600", "700", "800"],
 });
 
 export const metadata: Metadata = {
@@ -20,12 +29,13 @@ const themeInitScript = `
   try {
     var k = 'payround-theme';
     var v = localStorage.getItem(k);
-    if (v === 'light' || v === 'dark') {
-      document.documentElement.setAttribute('data-theme', v);
-    } else {
-      document.documentElement.removeAttribute('data-theme');
+    if (v !== 'light' && v !== 'dark') {
+      v = window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
     }
-  } catch (e) {}
+    document.documentElement.setAttribute('data-theme', v);
+  } catch (e) {
+    document.documentElement.setAttribute('data-theme', 'dark');
+  }
 })();
 `;
 
@@ -35,7 +45,11 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className={sans.variable} suppressHydrationWarning>
+    <html
+      lang="en"
+      className={`${sans.variable} ${display.variable}`}
+      suppressHydrationWarning
+    >
       <body
         className={`${sans.className} min-h-screen bg-page text-foreground antialiased`}
       >
@@ -44,7 +58,12 @@ export default function RootLayout({
           strategy="beforeInteractive"
           dangerouslySetInnerHTML={{ __html: themeInitScript }}
         />
-        <AuthProvider>{children}</AuthProvider>
+        <AuthProvider>
+          <I18nProvider>
+            <EmulatorBanner />
+            {children}
+          </I18nProvider>
+        </AuthProvider>
       </body>
     </html>
   );

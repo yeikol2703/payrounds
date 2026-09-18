@@ -1,6 +1,7 @@
 import type { Config } from "tailwindcss";
 
 const config: Config = {
+  darkMode: ["selector", '[data-theme="dark"] &'],
   content: [
     "./app/**/*.{js,ts,jsx,tsx,mdx}",
     "./components/**/*.{js,ts,jsx,tsx,mdx}",
@@ -22,6 +23,7 @@ const config: Config = {
           DEFAULT: "rgb(var(--color-accent) / <alpha-value>)",
           foreground: "rgb(var(--color-accent-foreground) / <alpha-value>)",
           muted: "rgb(var(--color-accent-muted) / <alpha-value>)",
+          ink: "rgb(var(--color-accent-ink) / <alpha-value>)",
         },
         ring: "rgb(var(--color-ring) / <alpha-value>)",
       },

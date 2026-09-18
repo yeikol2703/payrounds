@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useI18n } from "@/lib/i18n";
 
 type CopyLinkButtonProps = {
   text: string;
@@ -14,6 +15,7 @@ export function CopyLinkButton({
   className,
   "data-testid": testId,
 }: CopyLinkButtonProps) {
+  const { t } = useI18n();
   const [copied, setCopied] = useState(false);
 
   async function handleCopy() {
@@ -37,7 +39,7 @@ export function CopyLinkButton({
         "shrink-0 rounded-xl border border-border bg-elevated px-3 py-2 text-xs font-semibold text-foreground shadow-sm transition hover:bg-elevated-muted"
       }
     >
-      {copied ? "Copied!" : "Copy link"}
+      {copied ? t("copy.copied") : t("copy.link")}
     </button>
   );
 }
