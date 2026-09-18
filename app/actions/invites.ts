@@ -120,6 +120,7 @@ export async function sendInvite(
   subName: string,
   ownerDisplayName: string,
   ownerId: string,
+  options?: { amountOwed?: number | null },
 ): Promise<SendInviteResult> {
   const invitedEmail = email.trim().toLowerCase();
   if (!invitedEmail.includes("@")) {
@@ -151,6 +152,13 @@ export async function sendInvite(
     "http://localhost:3000";
   const inviteUrl = `${base}/invite/${token}`;
 
+  const tentative =
+    typeof options?.amountOwed === "number" &&
+    Number.isFinite(options.amountOwed) &&
+    options.amountOwed > 0
+      ? parseFloat(options.amountOwed.toFixed(2))
+      : null;
+
   await inviteRef(db, token).set({
     token,
     subId,
@@ -160,6 +168,7 @@ export async function sendInvite(
     ownerDisplayName: ownerDisplayName.trim(),
     expiresAt,
     accepted: false,
+    amountOwed: tentative,
   });
 
   const apiKey = process.env.RESEND_API_KEY?.trim();
@@ -324,6 +333,14 @@ export async function acceptInviteJoin(
           throw new Error("Subscription not found");
         }
         const sub = subDoc.data() as Subscription;
+        const invAmount =
+          typeof invData.amountOwed === "number" &&
+          Number.isFinite(invData.amountOwed) &&
+          invData.amountOwed > 0
+            ? parseFloat(invData.amountOwed.toFixed(2))
+            : null;
+        const useCustom =
+          (sub.splitMode === "custom" || invAmount != null) && invAmount != null;
 
         for (const ref of existingRefs) {
           const m = await tx.get(ref);
@@ -332,12 +349,15 @@ export async function acceptInviteJoin(
           }
         }
 
-        const amountOwed = parseFloat(
+        const equalAmount = parseFloat(
           (sub.totalCost / (newCount + 1)).toFixed(2),
         );
+        const amountOwed = useCustom ? invAmount : equalAmount;
 
-        for (const ref of existingRefs) {
-          tx.update(ref, { amountOwed });
+        if (!useCustom) {
+          for (const ref of existingRefs) {
+            tx.update(ref, { amountOwed: equalAmount });
+          }
         }
 
         tx.set(membersCol.doc(uid), {

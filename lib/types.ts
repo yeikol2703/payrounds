@@ -12,11 +12,15 @@ export interface AppUser {
   displayName: string;
   role: UserRole;
   createdAt: Timestamp;
+  /** UI language preference. Default Spanish for CR. */
+  locale?: "es" | "en";
 }
 
 // ─── Subscriptions ────────────────────────────────────────────────────────────
 
 export type SubscriptionStatus = "active" | "cancelled";
+
+export type SplitMode = "equal" | "custom";
 
 export interface Subscription {
   id: string;
@@ -27,6 +31,12 @@ export interface Subscription {
   /** Day of month payment is due (1–28). */
   dueDayOfMonth: number;
   status: SubscriptionStatus;
+  /** How member shares are assigned. Defaults to equal when missing (legacy docs). */
+  splitMode?: SplitMode;
+  /**
+   * Brand icon key (Simple Icons slug), `"default"`, or omit/`null` for auto-detect from `name`.
+   */
+  iconKey?: string | null;
   createdAt: Timestamp;
 }
 
@@ -79,6 +89,7 @@ export type NotificationType =
   | "deadline_reminder"
   | "cycle_closed"
   | "membership_invite"
+  | "membership_left"
   | "subscription_cancelled";
 
 export interface AppNotification {
@@ -125,4 +136,6 @@ export interface PendingInvite {
   accepted: boolean;
   /** Member declined from notifications inbox. */
   declined?: boolean;
+  /** Tentative share when owner used custom split (applied on accept). */
+  amountOwed?: number | null;
 }

@@ -27,11 +27,12 @@ service cloud.firestore {
       allow update, delete: if isOwner(subId);
 
       match /members/{memberUid} {
-        // resource.data.uid == auth.uid is required so collectionGroup("members")
-        // queries with where("uid","==",auth.uid) are allowed.
+        // Owner or any member of this subscription can read the roster.
+        // resource.data.uid == auth.uid still covers collectionGroup("members").
         allow read: if request.auth != null && (
           resource.data.uid == request.auth.uid
           || isOwner(subId)
+          || isMember(subId)
         );
         allow write: if isOwner(subId);
       }

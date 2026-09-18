@@ -19,6 +19,7 @@ import {
 import { db } from "@/lib/firebase";
 import type {
   Member,
+  SplitMode,
   Subscription,
   SubscriptionStatus,
   SubscriptionWithMembers,
@@ -220,16 +221,27 @@ export interface CreateSubscriptionInput {
   name: string;
   totalCost: number;
   dueDayOfMonth: number;
+  splitMode?: SplitMode;
+  /** Simple Icons slug, `"default"`, or omit for auto-detect. */
+  iconKey?: string | null;
 }
 
 export async function createSubscription(
   input: CreateSubscriptionInput,
 ): Promise<string> {
-  const ref = await addDoc(subsCol(), {
-    ...input,
+  const payload: Record<string, unknown> = {
+    ownerId: input.ownerId,
+    name: input.name,
+    totalCost: input.totalCost,
+    dueDayOfMonth: input.dueDayOfMonth,
+    splitMode: input.splitMode === "custom" ? "custom" : "equal",
     status: "active" as SubscriptionStatus,
     createdAt: serverTimestamp(),
-  });
+  };
+  if (input.iconKey != null && input.iconKey !== "" && input.iconKey !== "auto") {
+    payload.iconKey = input.iconKey;
+  }
+  const ref = await addDoc(subsCol(), payload);
   return ref.id;
 }
 
@@ -346,7 +358,10 @@ export async function removeMember(subId: string, uid: string): Promise<void> {
 export async function updateSubscription(
   subId: string,
   updates: Partial<
-    Pick<Subscription, "name" | "totalCost" | "dueDayOfMonth" | "status">
+    Pick<
+      Subscription,
+      "name" | "totalCost" | "dueDayOfMonth" | "status" | "iconKey"
+    >
   >,
 ): Promise<void> {
   await updateDoc(doc(db, "subscriptions", subId), updates);
