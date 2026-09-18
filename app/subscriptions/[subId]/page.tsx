@@ -5,16 +5,15 @@ import { useParams, useRouter } from "next/navigation";
 import { Timestamp } from "firebase/firestore";
 import { getAuth } from "firebase/auth";
 import {
-  sendInvite,
-  voidPendingInvitesForSubscription,
-} from "@/app/actions/invites";
-import { useAuth } from "@/lib/auth-context";
-import {
   getSubscriptionWithMembers,
   subscribeToMembers,
   removeMember,
-  cancelSubscription,
+  updateSubscription,
 } from "@/lib/firestore/subscriptions";
+import { cancelSubscriptionFully } from "@/lib/cancel-subscription";
+import {
+  sendInvite,
+} from "@/app/actions/invites";
 import {
   subscribeToPayments,
   closeCycle,
@@ -28,9 +27,13 @@ import {
 } from "@/lib/firestore/payments";
 import { createNotification } from "@/lib/firestore/notifications";
 import { findUserByEmail } from "@/app/actions/users";
+import { useAuth } from "@/lib/auth-context";
 import type { SubscriptionWithMembers, Payment, Member } from "@/lib/types";
 import { formatCreatedAt } from "@/lib/format-date";
+import { AppPage } from "@/components/app-page";
 import { CopyLinkButton } from "@/components/ui/copy-link-button";
+import { ServiceIcon } from "@/components/subscription/service-icon";
+import { ServiceIconPicker } from "@/components/subscription/service-icon-picker";
 import { useDialogEscape } from "@/components/ui/modal";
 
 function formatUploadedAt(ts: unknown): string {
@@ -258,7 +261,7 @@ function ProofModal({
             <p
               role="alert"
               data-testid="proof-action-error"
-              className="w-full text-xs font-medium text-red-700 dark:text-red-300 sm:order-first sm:basis-full"
+              className="w-full text-xs pr-text-danger sm:order-first sm:basis-full"
             >
               {actionError}
             </p>
@@ -292,10 +295,10 @@ function ProofModal({
             onClick={handleReject}
             disabled={loading}
             data-testid="proof-reject"
-            className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-red-300/50 bg-red-500/10 py-2.5 text-sm font-semibold text-red-800 transition hover:bg-red-500/20 disabled:opacity-50 dark:text-red-200"
+            className="pr-btn-danger flex flex-1 rounded-xl py-2.5 text-sm disabled:opacity-50"
           >
             {loading && action === "reject" ? (
-              <span className="h-4 w-4 animate-spin rounded-full border-2 border-red-500/40 border-t-red-600" />
+              <span className="h-4 w-4 animate-spin rounded-full border-2 border-current/40 border-t-current" />
             ) : (
               <svg
                 width="15"
@@ -375,10 +378,10 @@ function CancelSubscriptionConfirmModal({
             type="button"
             onClick={() => void onConfirm()}
             disabled={loading}
-            className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-red-600 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:brightness-110 disabled:opacity-50"
+            className="pr-btn-danger flex flex-1 rounded-xl py-2.5 text-sm disabled:opacity-50"
           >
             {loading ? (
-              <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/40 border-t-white" />
+              <span className="h-4 w-4 animate-spin rounded-full border-2 border-current/40 border-t-current" />
             ) : null}
             Confirm cancel
           </button>
@@ -475,6 +478,7 @@ function AddMemberModal({
   onClose: () => void;
 }) {
   const [email, setEmail] = useState("");
+  const [customAmount, setCustomAmount] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [inviteShare, setInviteShare] = useState<{
@@ -525,6 +529,17 @@ function AddMemberModal({
         return;
       }
 
+      const amountNum = parseFloat(customAmount);
+      const useCustom =
+        sub.splitMode === "custom" ||
+        (Number.isFinite(amountNum) && amountNum > 0);
+      if (sub.splitMode === "custom") {
+        if (!Number.isFinite(amountNum) || amountNum <= 0) {
+          setError("Enter this friend’s share amount.");
+          return;
+        }
+      }
+
       const { token, emailSent, emailFailureReason } = await sendInvite(
         idToken,
         trimmed,
@@ -532,6 +547,7 @@ function AddMemberModal({
         sub.name,
         ownerDisplayName,
         ownerId,
+        useCustom && amountNum > 0 ? { amountOwed: amountNum } : undefined,
       );
       const url = `${appBase}/invite/${token}`;
 
@@ -633,7 +649,7 @@ function AddMemberModal({
               {!inviteShare.emailSent && inviteShare.emailFailureReason ? (
                 <p
                   role="status"
-                  className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-950 dark:text-amber-100"
+                  className="pr-alert-warning rounded-lg px-3 py-2 text-xs"
                 >
                   {inviteShare.emailFailureReason}
                 </p>
@@ -697,10 +713,37 @@ function AddMemberModal({
                   disabled={loading}
                 />
               </div>
+              <div>
+                <label htmlFor="add-member-amount" className="pr-label">
+                  Their share (USD)
+                  {sub.splitMode === "custom" ? "" : " — optional"}
+                </label>
+                <div className="relative">
+                  <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-subtle">
+                    $
+                  </span>
+                  <input
+                    id="add-member-amount"
+                    data-testid="add-member-amount"
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={customAmount}
+                    onChange={(e) => setCustomAmount(e.target.value)}
+                    placeholder={
+                      sub.splitMode === "custom"
+                        ? "Required for custom split"
+                        : "Leave blank for equal split"
+                    }
+                    className="pr-input pl-7"
+                    disabled={loading}
+                  />
+                </div>
+              </div>
               {error ? (
                 <p
                   role="alert"
-                  className="rounded-lg bg-red-500/10 px-3 py-2 text-sm text-red-700 dark:text-red-300"
+                  className="pr-alert-danger rounded-lg px-3 py-2 text-sm"
                 >
                   {error}
                 </p>
@@ -750,6 +793,8 @@ export default function SubscriptionDetailPage() {
   const [removeTarget, setRemoveTarget] = useState<Member | null>(null);
   const [cancelling, setCancelling] = useState(false);
   const [removingMember, setRemovingMember] = useState(false);
+  const [iconPickerOpen, setIconPickerOpen] = useState(false);
+  const iconTriggerRef = useRef<HTMLButtonElement>(null);
 
   const cycleId = useMemo(() => toCycleId(new Date()), []);
 
@@ -783,6 +828,19 @@ export default function SubscriptionDetailPage() {
     };
   }, [subId, cycleId]);
 
+  async function handleIconChange(next: string | null) {
+    if (!sub || !isOwner) {
+      return;
+    }
+    const iconKey = next ?? null;
+    try {
+      await updateSubscription(sub.id, { iconKey });
+      setSub((prev) => (prev ? { ...prev, iconKey } : prev));
+    } catch (err) {
+      console.warn("icon update failed", err);
+    }
+  }
+
   async function handleClose() {
     if (!appUser || !subId) {
       return;
@@ -802,42 +860,12 @@ export default function SubscriptionDetailPage() {
     }
     setCancelling(true);
     try {
-      const membersSnapshot = [...sub.members];
-      const idToken = await getAuth().currentUser?.getIdToken(true);
-      let pendingInviteeUids: string[] = [];
-      if (idToken) {
-        try {
-          const voided = await voidPendingInvitesForSubscription(
-            idToken,
-            subId,
-          );
-          pendingInviteeUids = voided.inviteeUids;
-        } catch (err) {
-          console.warn("void pending invites failed", err);
-        }
-      }
-
-      await cancelSubscription(subId);
-      const cycle = cycleId;
-      const notifyUids = new Set([
-        ...membersSnapshot.map((m) => m.uid),
-        ...pendingInviteeUids,
-      ]);
-      await Promise.all(
-        [...notifyUids].map((uid) =>
-          createNotification({
-            recipientUid: uid,
-            type: "subscription_cancelled",
-            subId,
-            subName: sub.name,
-            cycleId: cycle,
-            fromUid: appUser.uid,
-            fromDisplayName: appUser.displayName,
-          }).catch((err) => {
-            console.warn("cancel notification failed", uid, err);
-          }),
-        ),
-      );
+      await cancelSubscriptionFully({
+        subId,
+        subName: sub.name,
+        ownerUid: appUser.uid,
+        ownerDisplayName: appUser.displayName,
+      });
       router.push("/dashboard");
     } finally {
       setCancelling(false);
@@ -909,8 +937,8 @@ export default function SubscriptionDetailPage() {
 
   if (loading) {
     return (
-      <div className="mx-auto w-full max-w-2xl px-4 py-6 sm:px-6 sm:py-8">
-        <div className="animate-pulse space-y-4">
+      <div className="px-4 pb-6 pt-2 sm:px-6 sm:pb-8 sm:pt-0 md:px-8 md:py-8">
+        <div className="w-full max-w-2xl animate-pulse space-y-4">
           <div className="h-7 w-1/3 rounded-lg bg-elevated-muted" />
           <div className="h-52 rounded-2xl bg-elevated-muted" />
         </div>
@@ -920,70 +948,95 @@ export default function SubscriptionDetailPage() {
 
   if (!sub) {
     return (
-      <div className="px-4 py-8 text-center sm:px-6">
+      <div className="px-4 pb-6 pt-2 text-center sm:px-6 sm:pb-8 sm:pt-0 md:px-8 md:py-8">
         <p className="text-sm font-medium text-muted">Subscription not found.</p>
       </div>
     );
   }
 
   return (
-    <div className="mx-auto w-full max-w-2xl px-4 py-6 sm:px-6 sm:py-8">
-      <div className="mb-8 flex flex-wrap items-center justify-between gap-3">
-        <button
-          type="button"
-          onClick={() => router.push("/dashboard")}
-          className="pr-link-back"
-        >
-          <svg
-            width="16"
-            height="16"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            aria-hidden
-          >
-            <polyline points="15 18 9 12 15 6" />
-          </svg>
-          Dashboard
-        </button>
-        {isOwner && sub.status === "active" ? (
+    <>
+    <AppPage
+      width="2xl"
+      beforeHeader={
+        <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
           <button
             type="button"
-            onClick={() => setShowCancelConfirm(true)}
-            className="rounded-xl border border-red-400/50 bg-red-500/10 px-4 py-2 text-sm font-semibold text-red-800 shadow-sm transition hover:bg-red-500/20 dark:text-red-200"
+            onClick={() => router.push("/dashboard")}
+            className="pr-link-back"
           >
-            Cancel subscription
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden
+            >
+              <polyline points="15 18 9 12 15 6" />
+            </svg>
+            Dashboard
           </button>
-        ) : null}
-      </div>
-
-      <div className="mb-8 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-        <div>
-          <div className="flex flex-wrap items-center gap-3">
-            <h1 className="pr-page-title">{sub.name}</h1>
-            {isOwner && sub.status === "active" ? (
-              <button
-                type="button"
-                data-testid="add-member-open"
-                onClick={() => setShowAddMember(true)}
-                className="rounded-lg border border-border bg-elevated px-3 py-1.5 text-xs font-semibold text-foreground shadow-sm transition hover:bg-elevated-muted"
-              >
-                Add member
-              </button>
-            ) : null}
-          </div>
-          <p className="pr-section-lead">
-            ${sub.totalCost.toFixed(2)}/mo · due {sub.dueDayOfMonth}th ·{" "}
-            {sub.members.length} members
-            {formatCreatedAt(sub.createdAt)
-              ? ` · created ${formatCreatedAt(sub.createdAt)}`
-              : ""}
-          </p>
+          {isOwner && sub.status === "active" ? (
+            <button
+              type="button"
+              onClick={() => setShowCancelConfirm(true)}
+              className="pr-btn-danger rounded-xl px-4 py-2 text-sm shadow-sm"
+            >
+              Cancel subscription
+            </button>
+          ) : null}
         </div>
-        {allConfirmed ? (
+      }
+      title={
+        <div className="flex flex-wrap items-center gap-3">
+          {isOwner && sub.status === "active" ? (
+            <button
+              type="button"
+              ref={iconTriggerRef}
+              data-testid="service-icon-title-trigger"
+              aria-expanded={iconPickerOpen}
+              aria-label="Change icon"
+              title="Tap to change icon"
+              onClick={() => setIconPickerOpen((o) => !o)}
+              className={`shrink-0 rounded-2xl transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent ${
+                iconPickerOpen
+                  ? "ring-2 ring-accent/50"
+                  : "hover:brightness-110 active:scale-95"
+              }`}
+            >
+              <ServiceIcon name={sub.name} iconKey={sub.iconKey} size="lg" />
+            </button>
+          ) : (
+            <ServiceIcon name={sub.name} iconKey={sub.iconKey} size="lg" />
+          )}
+          <h1 className="pr-page-title">{sub.name}</h1>
+          {isOwner && sub.status === "active" ? (
+            <button
+              type="button"
+              data-testid="add-member-open"
+              onClick={() => setShowAddMember(true)}
+              className="rounded-lg border border-border bg-elevated/60 px-3 py-1.5 text-xs font-semibold text-foreground shadow-sm backdrop-blur-md transition hover:bg-elevated-muted"
+            >
+              Add member
+            </button>
+          ) : null}
+        </div>
+      }
+      lead={
+        <p className="pr-section-lead">
+          ${sub.totalCost.toFixed(2)}/mo · due {sub.dueDayOfMonth}th ·{" "}
+          {sub.members.length} members
+          {formatCreatedAt(sub.createdAt)
+            ? ` · created ${formatCreatedAt(sub.createdAt)}`
+            : ""}
+        </p>
+      }
+      actions={
+        allConfirmed ? (
           <button
             type="button"
             onClick={handleClose}
@@ -992,8 +1045,22 @@ export default function SubscriptionDetailPage() {
           >
             {closing ? "Closing…" : "✓ Close month"}
           </button>
-        ) : null}
-      </div>
+        ) : null
+      }
+    >
+      {isOwner && sub.status === "active" ? (
+        <div className={iconPickerOpen ? "pr-card mb-6 p-4 sm:p-5" : "mb-0"}>
+          <ServiceIconPicker
+            name={sub.name}
+            value={sub.iconKey ?? null}
+            onChange={(next) => void handleIconChange(next)}
+            open={iconPickerOpen}
+            onOpenChange={setIconPickerOpen}
+            panelOnly
+            anchorRef={iconTriggerRef}
+          />
+        </div>
+      ) : null}
 
       {pendingReview.length > 0 ? (
         <div className="mb-6 flex flex-col gap-3 rounded-2xl border border-accent/25 bg-accent-muted px-4 py-3.5 sm:flex-row sm:items-center sm:justify-between">
@@ -1012,8 +1079,8 @@ export default function SubscriptionDetailPage() {
         </div>
       ) : null}
 
-      <div className="overflow-hidden rounded-2xl border border-border bg-elevated shadow-card">
-        <div className="border-b border-border bg-elevated-muted/50 px-4 py-4 sm:px-5">
+      <div className="overflow-hidden pr-list-glass">
+        <div className="border-b border-border bg-elevated-muted/30 px-4 py-4 sm:px-5">
           <p className="text-sm font-semibold text-foreground">
             Cycle {cycleId}
           </p>
@@ -1047,7 +1114,7 @@ export default function SubscriptionDetailPage() {
                         ? "bg-emerald-500/12 text-emerald-800 dark:text-emerald-200"
                         : status === "pending_review"
                           ? "bg-accent-muted text-accent dark:text-blue-200"
-                          : "bg-red-500/12 text-red-700 dark:text-red-300"
+                          : "pr-badge-danger"
                     }`}
                   >
                     {status === "pending_review"
@@ -1087,6 +1154,7 @@ export default function SubscriptionDetailPage() {
           ) : null}
         </div>
       </div>
+    </AppPage>
 
       {reviewPayment ? (
         <ProofModal
@@ -1130,6 +1198,6 @@ export default function SubscriptionDetailPage() {
           onClose={() => setShowAddMember(false)}
         />
       ) : null}
-    </div>
+    </>
   );
 }

@@ -5,6 +5,8 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { getAuth } from "firebase/auth";
 import { useAuth, authErrorToMessage } from "@/lib/auth-context";
 import { ThemeToggle } from "@/components/theme-toggle";
+import { MotionPage } from "@/components/motion";
+import { Atmosphere } from "@/components/atmosphere";
 import { acceptInviteJoin } from "@/app/actions/invites";
 import { getStoredWorkspaceMode } from "@/lib/workspace-mode";
 
@@ -120,37 +122,46 @@ function LoginPageContent() {
   }
 
   return (
-    <div className="relative flex min-h-screen flex-col items-center justify-center bg-page p-4">
-      <div className="absolute right-4 top-4 sm:right-6 sm:top-6">
+    <div className="relative flex min-h-screen flex-col">
+      <Atmosphere />
+      <div className="absolute right-4 top-4 z-20 sm:right-6 sm:top-6">
         <ThemeToggle />
       </div>
 
-      <div className="w-full max-w-md">
-        <div className="mb-10 text-center">
-          <div className="mb-5 inline-flex h-14 w-14 items-center justify-center rounded-2xl bg-accent shadow-lg shadow-accent/25">
+      <div className="relative z-10 mx-auto flex w-full max-w-5xl flex-1 flex-col justify-center gap-10 px-5 py-12 sm:px-8 lg:flex-row lg:items-center lg:gap-16 lg:px-10">
+        <MotionPage className="w-full max-w-md text-left lg:max-w-sm">
+          <div className="mb-2 inline-flex h-12 w-12 items-center justify-center rounded-2xl bg-white text-[rgb(8_11_26)] shadow-lg shadow-sky-400/25">
             <svg
-              width="28"
-              height="28"
+              width="22"
+              height="22"
               viewBox="0 0 24 24"
               fill="none"
-              stroke="white"
+              stroke="currentColor"
               strokeWidth="2"
               strokeLinecap="round"
               strokeLinejoin="round"
               aria-hidden
             >
-              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+              <path d="M12 3l1.5 4.5L18 9l-4.5 1.5L12 15l-1.5-4.5L6 9l4.5-1.5L12 3z" />
+              <path d="M19 14l.75 2.25L22 17l-2.25.75L19 20l-.75-2.25L16 17l2.25-.75L19 14z" />
             </svg>
           </div>
-          <h1 className="pr-page-title">Payround</h1>
-          <p className="pr-section-lead">
-            One account for owning plans and joining friends&apos; shares.
+          <p className="pr-kicker mt-6">Payround</p>
+          <h1 className="pr-display mt-3 text-left text-[clamp(2.4rem,7vw,3.75rem)] uppercase leading-[0.95] tracking-tight text-foreground">
+            Redefine your
+            <br />
+            <span className="text-accent">payment orbit</span>
+          </h1>
+          <p className="pr-section-lead mt-5 max-w-sm">
+            Shared subscriptions — secure, fluid, celestial. Admin owns the plan;
+            Member pays with proof.
           </p>
-        </div>
+        </MotionPage>
 
-        <div className="pr-card space-y-6 p-6 sm:p-8" data-testid="login-card">
+        <MotionPage className="w-full max-w-md">
+        <div className="pr-card space-y-6 p-6 sm:p-8 text-left" data-testid="login-card">
           {inviteToken ? (
-            <p className="rounded-lg border border-accent/25 bg-accent-muted px-3 py-2 text-xs font-medium text-accent dark:text-blue-100">
+            <p className="rounded-2xl border border-accent/30 bg-accent-muted px-3 py-2 text-xs font-medium text-accent-ink">
               After you sign in, we&apos;ll finish joining the subscription from
               your invite.
             </p>
@@ -196,7 +207,7 @@ function LoginPageContent() {
           </div>
 
           <div
-            className="flex rounded-xl border border-border bg-elevated-muted p-1"
+            className="flex rounded-full border border-border bg-elevated-muted/80 p-1 backdrop-blur-md"
             role="tablist"
             aria-label="Email account"
           >
@@ -209,9 +220,9 @@ function LoginPageContent() {
                 setAuthTab("signin");
                 setError("");
               }}
-              className={`flex-1 rounded-lg py-2 text-sm font-semibold transition ${
+              className={`flex-1 rounded-full py-2 text-sm font-bold transition ${
                 authTab === "signin"
-                  ? "bg-elevated text-foreground shadow-sm"
+                  ? "bg-accent text-accent-foreground shadow-md shadow-accent/20"
                   : "text-muted hover:text-foreground"
               }`}
             >
@@ -226,9 +237,9 @@ function LoginPageContent() {
                 setAuthTab("register");
                 setError("");
               }}
-              className={`flex-1 rounded-lg py-2 text-sm font-semibold transition ${
+              className={`flex-1 rounded-full py-2 text-sm font-bold transition ${
                 authTab === "register"
-                  ? "bg-elevated text-foreground shadow-sm"
+                  ? "bg-accent text-accent-foreground shadow-md shadow-accent/20"
                   : "text-muted hover:text-foreground"
               }`}
             >
@@ -357,17 +368,18 @@ function LoginPageContent() {
             <p
               role="alert"
               data-testid="login-error"
-              className="rounded-lg bg-red-500/10 px-3 py-2 text-center text-sm text-red-700 dark:text-red-300"
+              className="pr-alert-danger rounded-lg px-3 py-2 text-center text-sm"
             >
               {error}
             </p>
           ) : null}
         </div>
 
-        <p className="mt-8 text-center text-xs text-muted">
-          After signing in, use the <strong>Admin</strong> tab for subscriptions
-          you own and the <strong>Member</strong> tab for ones you joined.
+        <p className="mt-6 text-left text-xs text-muted">
+          After signing in, use <strong>Admin</strong> for plans you own and{" "}
+          <strong>Member</strong> for ones you joined.
         </p>
+        </MotionPage>
       </div>
     </div>
   );

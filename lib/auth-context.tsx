@@ -43,6 +43,7 @@ interface AuthContextValue {
     displayName: string,
   ) => Promise<void>;
   signOut: () => Promise<void>;
+  refreshAppUser: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -135,6 +136,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     router.push("/login");
   }, [router]);
 
+  const refreshAppUser = useCallback(async () => {
+    const firebaseUser = auth.currentUser;
+    if (!firebaseUser) {
+      setAppUser(null);
+      return;
+    }
+    const profile = await getOrCreateUserProfile(firebaseUser);
+    setAppUser(profile);
+  }, []);
+
   return (
     <AuthContext.Provider
       value={{
@@ -146,6 +157,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         signInWithPassword,
         registerWithPassword,
         signOut,
+        refreshAppUser,
       }}
     >
       {children}
@@ -206,6 +218,8 @@ function appUserFromFirestoreSnapshot(
       "User",
     role: (data.role as UserRole) ?? "member",
     createdAt: data.createdAt,
+    locale:
+      data.locale === "en" || data.locale === "es" ? data.locale : undefined,
   } as AppUser;
 }
 

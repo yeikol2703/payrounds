@@ -23,16 +23,19 @@ export function setStoredWorkspaceMode(mode: WorkspaceMode): void {
   localStorage.setItem(STORAGE_KEY, mode);
 }
 
-/** Infer mode from route; shared routes (e.g. notifications) keep the stored tab. */
+/** Infer mode from route; shared routes keep the stored tab. */
 export function workspaceModeFromPath(pathname: string): WorkspaceMode {
   if (pathname === "/pay" || pathname.startsWith("/pay/")) {
     return "member";
   }
   if (
     pathname.startsWith("/dashboard") ||
-    pathname.startsWith("/subscriptions")
+    pathname.startsWith("/subscriptions") ||
+    pathname.startsWith("/friends") ||
+    pathname.startsWith("/stats")
   ) {
     return "admin";
   }
+  // Shared: notifications, settings, legacy /account
   return getStoredWorkspaceMode();
 }

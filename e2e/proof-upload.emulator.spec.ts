@@ -61,6 +61,7 @@ test.describe("Payment proof upload (emulator)", () => {
     ).toBeVisible({ timeout: 30_000 });
 
     await member.getByTestId(`proof-upload-${SUB_ID}`).setInputFiles(PROOF_FILE);
+    await member.getByTestId(`proof-submit-${SUB_ID}`).click();
 
     await expect(member.getByText("Under review").first()).toBeVisible({
       timeout: 60_000,
@@ -101,6 +102,7 @@ test.describe("Payment proof upload (emulator)", () => {
     ).toBeVisible({ timeout: 30_000 });
 
     await member.getByTestId(`proof-upload-${SUB_ID}`).setInputFiles(PROOF_FILE);
+    await member.getByTestId(`proof-submit-${SUB_ID}`).click();
     await expect(member.getByText("Under review").first()).toBeVisible({
       timeout: 60_000,
     });

@@ -13,7 +13,9 @@ import {
   UserPlus,
   X,
 } from "lucide-react";
+import { useI18n, dateLocale } from "@/lib/i18n";
 import { useAuth } from "@/lib/auth-context";
+import { AppPage } from "@/components/app-page";
 import {
   subscribeToNotifications,
   markAsRead,
@@ -39,7 +41,11 @@ function startOfTodayMs(): number {
   return d.getTime();
 }
 
-function formatTimeAgo(n: AppNotification): string {
+function formatTimeAgo(
+  n: AppNotification,
+  locale: "es" | "en",
+  t: (key: import("@/lib/i18n").MessageKey, vars?: Record<string, string | number>) => string,
+): string {
   const ms = createdAtMillis(n);
   if (!ms) {
     return "";
@@ -47,80 +53,89 @@ function formatTimeAgo(n: AppNotification): string {
   const diff = Date.now() - ms;
   const sec = Math.floor(diff / 1000);
   if (sec < 45) {
-    return "Just now";
+    return t("notif.ago.just");
   }
   const min = Math.floor(sec / 60);
   if (min < 60) {
-    return `${min}m ago`;
+    return t("notif.ago.m", { n: min });
   }
   const hr = Math.floor(min / 60);
   if (hr < 24) {
-    return `${hr}h ago`;
+    return t("notif.ago.h", { n: hr });
   }
   const days = Math.floor(hr / 24);
   if (days < 7) {
-    return `${days}d ago`;
+    return t("notif.ago.d", { n: days });
   }
-  return new Date(ms).toLocaleDateString("en-US", {
+  return new Date(ms).toLocaleDateString(dateLocale(locale), {
     month: "short",
     day: "numeric",
   });
 }
 
-function formatCreatedDate(n: AppNotification): string {
+function formatCreatedDate(n: AppNotification, locale: "es" | "en"): string {
   const ms = createdAtMillis(n);
   if (!ms) {
     return "";
   }
-  return new Date(ms).toLocaleDateString("en-US", {
+  return new Date(ms).toLocaleDateString(dateLocale(locale), {
     month: "short",
     day: "numeric",
     year: "numeric",
   });
 }
 
-function notifCopy(n: AppNotification): { title: string; description: string } {
+function notifCopy(
+  n: AppNotification,
+  t: (key: import("@/lib/i18n").MessageKey, vars?: Record<string, string | number>) => string,
+): { title: string; description: string } {
   const name = n.fromDisplayName;
+  const sub = n.subName;
   switch (n.type) {
     case "proof_uploaded":
       return {
-        title: `${name} uploaded proof for ${n.subName}`,
-        description: `Cycle ${n.cycleId}`,
+        title: t("notif.copy.proofUploaded", { name, sub }),
+        description: t("notif.copy.cycle", { cycle: n.cycleId }),
       };
     case "payment_confirmed":
       return {
-        title: `Your payment for ${n.subName} was confirmed`,
+        title: t("notif.copy.confirmed", { sub }),
         description: "",
       };
     case "payment_rejected": {
       const note = n.detail?.trim();
       return {
-        title: `Your payment for ${n.subName} was rejected`,
+        title: t("notif.copy.rejected", { sub }),
         description: note ?? "",
       };
     }
     case "deadline_reminder":
       return {
-        title: `Payment due soon for ${n.subName}`,
+        title: t("notif.copy.deadline", { sub }),
         description: "",
       };
     case "cycle_closed":
       return {
-        title: `${n.subName} — ${n.cycleId} closed successfully`,
+        title: t("notif.copy.cycleClosed", { sub, cycle: n.cycleId }),
         description: "",
       };
     case "membership_invite":
       return {
-        title: `${name} invited you to ${n.subName}`,
-        description: "Accept to join this subscription. Until then it won’t appear in Member.",
+        title: t("notif.copy.invite", { name, sub }),
+        description: t("notif.copy.inviteDesc"),
       };
     case "subscription_cancelled":
       return {
-        title: `${n.subName} was cancelled`,
-        description: `${name} cancelled this subscription. It no longer appears in Member.`,
+        title: t("notif.copy.cancelled", { sub }),
+        description: t("notif.copy.cancelledDesc", { name }),
+      };
+    case "membership_left":
+      return {
+        title: t("notif.copy.memberLeft", { name, sub }),
+        description: t("notif.copy.memberLeftDesc"),
       };
     default:
-      return { title: "Update", description: n.subName };
+      return { title: t("notif.copy.generic"), description: n.subName };
   }
 }
 
@@ -150,7 +165,7 @@ function NotifIcon({ type }: { type: NotificationType }) {
     case "payment_rejected":
       return (
         <span
-          className={`${base} border-red-500/25 bg-red-500/10 text-red-800 dark:text-red-200`}
+          className={`${base} pr-badge-danger border-transparent`}
           aria-hidden
         >
           <X className="h-4 w-4" strokeWidth={2.5} />
@@ -159,7 +174,7 @@ function NotifIcon({ type }: { type: NotificationType }) {
     case "deadline_reminder":
       return (
         <span
-          className={`${base} border-amber-500/30 bg-amber-500/10 text-amber-950 dark:text-amber-100`}
+          className={`${base} pr-badge-warning border-transparent`}
           aria-hidden
         >
           <Clock className="h-4 w-4" />
@@ -175,9 +190,10 @@ function NotifIcon({ type }: { type: NotificationType }) {
         </span>
       );
     case "subscription_cancelled":
+    case "membership_left":
       return (
         <span
-          className={`${base} border-red-500/25 bg-red-500/10 text-red-800 dark:text-red-200`}
+          className={`${base} pr-badge-danger border-transparent`}
           aria-hidden
         >
           <Ban className="h-4 w-4" />
@@ -197,6 +213,7 @@ function NotifIcon({ type }: { type: NotificationType }) {
 
 export default function NotificationsPage() {
   const { appUser } = useAuth();
+  const { t, locale } = useI18n();
   const router = useRouter();
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [markingAll, setMarkingAll] = useState(false);
@@ -335,9 +352,9 @@ export default function NotificationsPage() {
         </h2>
         <ul className="flex flex-col gap-2">
           {items.map((n) => {
-            const { title: lineTitle, description } = notifCopy(n);
+            const { title: lineTitle, description } = notifCopy(n, t);
             const isInvite = n.type === "membership_invite";
-            const created = formatCreatedDate(n);
+            const created = formatCreatedDate(n, locale);
             const busy = actingId === n.id;
             // Actions stay until Accept/Decline marks the notif read.
             const canActOnInvite = isInvite && Boolean(n.inviteToken) && !n.read;
@@ -370,7 +387,7 @@ export default function NotificationsPage() {
                           </p>
                         ) : null}
                         <p className="mt-1.5 text-xs text-subtle">
-                          {formatTimeAgo(n)}
+                          {formatTimeAgo(n, locale, t)}
                           {created ? ` · ${created}` : ""}
                         </p>
                       </div>
@@ -428,7 +445,7 @@ export default function NotificationsPage() {
                     <p
                       className={`text-xs text-subtle ${description ? "mt-1.5" : "mt-1"}`}
                     >
-                      {formatTimeAgo(n)}
+                      {formatTimeAgo(n, locale, t)}
                       {created ? ` · ${created}` : ""}
                     </p>
                   </div>
@@ -442,42 +459,36 @@ export default function NotificationsPage() {
   }
 
   return (
-    <div className="px-4 pb-6 pt-2 sm:px-6 sm:pb-8 sm:pt-0 md:px-8 md:py-8">
-      <div className="mb-8 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-        <div>
-          <h1 className="pr-page-title">Notifications</h1>
-          <p className="pr-section-lead">
-            Invites to join, payment updates, and cycle changes.
-          </p>
-        </div>
+    <AppPage
+      title={t("notif.title")}
+      lead={t("notif.lead")}
+      actions={
         <button
           type="button"
           onClick={() => void handleMarkAll()}
           disabled={markingAll || unreadCount === 0}
           className="shrink-0 rounded-xl border border-border bg-elevated px-3 py-2 text-xs font-semibold text-foreground shadow-sm transition hover:bg-elevated-muted disabled:opacity-40"
         >
-          {markingAll ? "Marking…" : "Mark all as read"}
+          {markingAll ? t("notif.marking") : t("notif.markAll")}
         </button>
-      </div>
-
-      <div className="mx-auto w-full max-w-lg">
-        {actionError ? (
-          <p
-            role="alert"
-            className="mb-4 rounded-lg bg-red-500/10 px-3 py-2 text-sm text-red-700 dark:text-red-300"
-          >
-            {actionError}
-          </p>
-        ) : null}
-        {notifications.length === 0 ? (
-          <p className="text-sm text-muted">No notifications yet.</p>
-        ) : (
-          <>
-            {renderSection("Today", today)}
-            {renderSection("Earlier", earlier)}
-          </>
-        )}
-      </div>
-    </div>
+      }
+    >
+      {actionError ? (
+        <p
+          role="alert"
+          className="mb-4 pr-alert-danger rounded-lg px-3 py-2 text-sm"
+        >
+          {actionError}
+        </p>
+      ) : null}
+      {notifications.length === 0 ? (
+        <p className="text-sm text-muted">{t("notif.empty")}</p>
+      ) : (
+        <>
+          {renderSection(t("notif.today"), today)}
+          {renderSection(t("notif.earlier"), earlier)}
+        </>
+      )}
+    </AppPage>
   );
 }

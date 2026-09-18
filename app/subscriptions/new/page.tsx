@@ -10,7 +10,12 @@ import { createSubscription } from "@/lib/firestore/subscriptions";
 import { openCycle, toCycleId } from "@/lib/firestore/cycles";
 import { createNotification } from "@/lib/firestore/notifications";
 import { DayOfMonthPicker } from "@/components/day-of-month-picker";
+import { AppPage } from "@/components/app-page";
 import { CopyLinkButton } from "@/components/ui/copy-link-button";
+import { ServiceIconPicker } from "@/components/subscription/service-icon-picker";
+import { equalShare, customAmountsSumOk } from "@/lib/split";
+import { useI18n, type MessageKey } from "@/lib/i18n";
+import type { SplitMode } from "@/lib/types";
 
 interface FriendInput {
   /** Stable React key — must not depend on `email` or the input remounts every keystroke. */
@@ -19,7 +24,10 @@ interface FriendInput {
   uid?: string;
   displayName?: string;
   found?: boolean;
-  error?: string;
+  /** Message key for lookup status (translated at render). */
+  errorKey?: MessageKey;
+  /** Custom split amount (USD string). */
+  amount?: string;
 }
 
 function createFriendRow(): FriendInput {
@@ -27,7 +35,7 @@ function createFriendRow(): FriendInput {
     typeof crypto !== "undefined" && "randomUUID" in crypto
       ? crypto.randomUUID()
       : `friend-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
-  return { rowId, email: "" };
+  return { rowId, email: "", amount: "" };
 }
 
 /** Calendar day-of-month options (1–28; cap avoids Feb edge cases). */
@@ -50,22 +58,28 @@ function ordinalSuffix(n: number): string {
   }
 }
 
-function formatBillingDayPhrase(day: number): string {
-  return `the ${day}${ordinalSuffix(day)} of each month`;
-}
-
 function Steps({ current }: { current: number }) {
+  const { t } = useI18n();
   const steps =
     current >= 3
-      ? (["Details", "Friends", "Review", "Share links"] as const)
-      : (["Details", "Friends", "Review"] as const);
+      ? ([
+          t("newSub.step.details"),
+          t("newSub.step.friends"),
+          t("newSub.step.review"),
+          t("newSub.step.share"),
+        ] as const)
+      : ([
+          t("newSub.step.details"),
+          t("newSub.step.friends"),
+          t("newSub.step.review"),
+        ] as const);
   return (
     <div className="mb-10 flex flex-wrap items-center gap-x-2 gap-y-3 sm:gap-x-1 md:gap-x-0">
       {steps.map((s, i) => {
         const done = i < current;
         const active = i === current;
         return (
-          <div key={s} className="flex shrink-0 items-center">
+          <div key={`${s}-${i}`} className="flex shrink-0 items-center">
             <div className="flex items-center gap-2 sm:gap-2.5">
               <div
                 className={`flex h-8 w-8 items-center justify-center rounded-full text-xs font-bold transition ${
@@ -98,6 +112,7 @@ function Steps({ current }: { current: number }) {
 
 export default function NewSubscriptionPage() {
   const { appUser } = useAuth();
+  const { t, locale } = useI18n();
   const router = useRouter();
 
   const [manualInviteLinks, setManualInviteLinks] = useState<
@@ -117,10 +132,20 @@ export default function NewSubscriptionPage() {
   const [totalCost, setTotalCost] = useState("");
   /** Day of the calendar month (1–28) when payment is due each month. */
   const [dueDayOfMonth, setDueDayOfMonth] = useState(15);
+  const [splitMode, setSplitMode] = useState<SplitMode>("equal");
+  const [ownerAmount, setOwnerAmount] = useState("");
+  /** null = auto-detect from name; "default" or Simple Icons slug = manual. */
+  const [iconKey, setIconKey] = useState<string | null>(null);
 
   const [friends, setFriends] = useState<FriendInput[]>(() => [
     createFriendRow(),
   ]);
+
+  function formatBillingDayPhrase(day: number): string {
+    const dayLabel =
+      locale === "en" ? `${day}${ordinalSuffix(day)}` : String(day);
+    return t("newSub.billingDayPhrase", { day: dayLabel });
+  }
 
   function step1Valid() {
     return (
@@ -140,7 +165,7 @@ export default function NewSubscriptionPage() {
       uid: undefined,
       displayName: undefined,
       found: undefined,
-      error: undefined,
+      errorKey: undefined,
     };
     setFriends(updated);
     if (!email.includes("@")) {
@@ -160,14 +185,14 @@ export default function NewSubscriptionPage() {
           uid: user.uid,
           displayName: user.displayName,
           found: true,
-          error: "Registered — they'll accept from Notifications",
+          errorKey: "newSub.lookup.registered",
         };
       } else {
         updated[index] = {
           rowId,
           email,
           found: false,
-          error: "Not registered yet — they'll get an invite link",
+          errorKey: "newSub.lookup.notRegistered",
         };
       }
       setFriends([...updated]);
@@ -207,7 +232,7 @@ export default function NewSubscriptionPage() {
               ...f,
               email,
               found: false as const,
-              error: "Could not look up this email — they'll get an invite link",
+              errorKey: "newSub.lookup.couldNot" as const,
             };
           }
           const user = await findUserByEmail(idToken, email);
@@ -224,15 +249,14 @@ export default function NewSubscriptionPage() {
             ...f,
             email,
             found: false as const,
-            error:
-              "Not registered yet — they'll get an invite email to join Payround",
+            errorKey: "newSub.lookup.notRegisteredInvite" as const,
           };
         } catch {
           return {
             ...f,
             email,
             found: false as const,
-            error: "Could not look up this email — they'll get an invite link",
+            errorKey: "newSub.lookup.couldNot" as const,
           };
         }
       }),
@@ -255,6 +279,8 @@ export default function NewSubscriptionPage() {
         name: name.trim(),
         totalCost: parseFloat(totalCost),
         dueDayOfMonth,
+        splitMode,
+        iconKey,
       });
 
       const now = new Date();
@@ -280,9 +306,7 @@ export default function NewSubscriptionPage() {
       if (uniqueInviteEmails.length > 0) {
         const idToken = await getAuth().currentUser?.getIdToken(true);
         if (!idToken) {
-          throw new Error(
-            "Could not verify your session to email invites. Try again after re-login.",
-          );
+          throw new Error(t("newSub.sessionError"));
         }
         const appBase =
           process.env.NEXT_PUBLIC_APP_URL?.replace(/\/$/, "") ||
@@ -296,6 +320,13 @@ export default function NewSubscriptionPage() {
           inAppNotified?: boolean;
         }[] = [];
         for (const email of uniqueInviteEmails) {
+          const friendRow = resolved.find(
+            (f) => f.email.trim().toLowerCase() === email,
+          );
+          const customAmt =
+            splitMode === "custom"
+              ? parseFloat(friendRow?.amount || "0")
+              : undefined;
           const { token, emailSent, emailFailureReason } = await sendInvite(
             idToken,
             email,
@@ -303,6 +334,9 @@ export default function NewSubscriptionPage() {
             name.trim(),
             appUser.displayName,
             appUser.uid,
+            splitMode === "custom" && customAmt && customAmt > 0
+              ? { amountOwed: customAmt }
+              : undefined,
           );
           const url = `${appBase}/invite/${token}`;
 
@@ -334,8 +368,8 @@ export default function NewSubscriptionPage() {
               ? undefined
               : emailFailureReason ??
                 (registered?.uid
-                  ? "In-app invite sent; email was not delivered."
-                  : "Email was not delivered."),
+                  ? t("newSub.emailFail.inApp")
+                  : t("newSub.emailFail.generic")),
           });
         }
         if (manual.length > 0) {
@@ -347,7 +381,7 @@ export default function NewSubscriptionPage() {
 
       router.push("/dashboard");
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : "Something went wrong. Try again.");
+      setError(e instanceof Error ? e.message : t("newSub.genericError"));
     } finally {
       setSaving(false);
     }
@@ -357,66 +391,83 @@ export default function NewSubscriptionPage() {
   const inviteEmailCount = friends.filter((f) =>
     f.email.trim().toLowerCase().includes("@"),
   ).length;
-  const perPerson =
-    memberCount > 0 && parseFloat(totalCost) > 0
-      ? (parseFloat(totalCost) / (memberCount + 1)).toFixed(2)
-      : null;
+  const costNum = parseFloat(totalCost) || 0;
+  const equalPer =
+    costNum > 0 ? equalShare(costNum, memberCount).toFixed(2) : "";
+  const customFriendAmounts = friends
+    .filter((f) => f.email.trim())
+    .map((f) => parseFloat(f.amount || "0") || 0);
+  const ownerAmtNum = parseFloat(ownerAmount || "0") || 0;
+  const customSumOk =
+    splitMode !== "custom" ||
+    (costNum > 0 &&
+      customAmountsSumOk([...customFriendAmounts, ownerAmtNum], costNum));
+  const perPerson = splitMode === "equal" && equalPer ? equalPer : null;
 
   return (
-    <div className="mx-auto w-full max-w-2xl px-4 py-6 sm:px-6 sm:py-8">
-      <button
-        type="button"
-        onClick={() =>
-          step === 0
-            ? router.back()
-            : step === 3
-              ? router.push("/dashboard")
-              : setStep(step - 1)
-        }
-        className="pr-link-back mb-8"
-      >
-        <svg
-          width="16"
-          height="16"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          aria-hidden
+    <AppPage
+      width="2xl"
+      title={t("newSub.title")}
+      lead={t("newSub.lead")}
+      beforeHeader={
+        <button
+          type="button"
+          onClick={() =>
+            step === 0
+              ? router.back()
+              : step === 3
+                ? router.push("/dashboard")
+                : setStep(step - 1)
+          }
+          className="pr-link-back mb-6"
         >
-          <polyline points="15 18 9 12 15 6" />
-        </svg>
-        {step === 0 ? "Back to dashboard" : step === 3 ? "Dashboard" : "Back"}
-      </button>
-
-      <h1 className="pr-page-title mb-2">New subscription</h1>
-      <p className="pr-section-lead mb-8">
-        Set the plan, add friends, then open the first payment cycle.
-      </p>
-
+          <svg
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden
+          >
+            <polyline points="15 18 9 12 15 6" />
+          </svg>
+          {step === 0
+            ? t("newSub.backDashboard")
+            : step === 3
+              ? t("newSub.dashboard")
+              : t("newSub.back")}
+        </button>
+      }
+    >
       <Steps current={step} />
 
       {step === 0 ? (
         <div className="pr-card w-full space-y-6 p-4 sm:p-6 md:p-8">
           <div>
             <label htmlFor="sub-name" className="pr-label">
-              Service name
+              {t("newSub.serviceName")}
             </label>
             <input
               id="sub-name"
               type="text"
-              placeholder="Netflix, Spotify, Disney+…"
+              placeholder={t("newSub.servicePlaceholder")}
               value={name}
               onChange={(e) => setName(e.target.value)}
               className="pr-input"
             />
           </div>
+          <ServiceIconPicker
+            name={name}
+            value={iconKey}
+            onChange={setIconKey}
+          />
           <div className="grid gap-5 sm:grid-cols-2">
             <div>
               <label htmlFor="sub-cost" className="pr-label">
-                Total monthly cost (USD)
+                {t("newSub.totalCost")}
               </label>
               <div className="relative">
                 <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-subtle">
@@ -436,11 +487,10 @@ export default function NewSubscriptionPage() {
             </div>
             <div>
               <label htmlFor="billing-day-of-month" className="pr-label">
-                Billing date (day of the month)
+                {t("newSub.billingDate")}
               </label>
               <p className="mb-2 text-xs text-muted">
-                Which calendar day is the bill due each month? (1–{BILLING_DAY_MAX}{" "}
-                only.)
+                {t("newSub.billingHint", { max: BILLING_DAY_MAX })}
               </p>
               <DayOfMonthPicker
                 id="billing-day-of-month"
@@ -456,7 +506,7 @@ export default function NewSubscriptionPage() {
             onClick={() => setStep(1)}
             className="pr-btn-primary w-full"
           >
-            Continue
+            {t("newSub.continue")}
           </button>
         </div>
       ) : null}
@@ -464,11 +514,76 @@ export default function NewSubscriptionPage() {
       {step === 1 ? (
         <div className="pr-card w-full space-y-5 p-4 sm:p-6 md:p-8">
           <p className="text-sm leading-relaxed text-muted">
-            Add emails for people who split the bill. Anyone with a Payround
-            account is added to the group immediately; every friend with an email
-            also gets an invite link so they can open the subscription from their
-            inbox (new users can sign up from that link).
+            {t("newSub.friendsLead")}
           </p>
+
+          <div
+            className="flex rounded-xl border border-border bg-elevated-muted p-1"
+            role="group"
+            aria-label={t("newSub.splitMode")}
+            data-testid="split-mode-toggle"
+          >
+            <button
+              type="button"
+              data-testid="split-mode-equal"
+              aria-pressed={splitMode === "equal"}
+              onClick={() => setSplitMode("equal")}
+              className={`flex-1 rounded-lg px-3 py-1.5 text-xs font-semibold transition ${
+                splitMode === "equal"
+                  ? "bg-elevated text-foreground shadow-sm"
+                  : "text-muted hover:text-foreground"
+              }`}
+            >
+              {t("newSub.equalSplit")}
+            </button>
+            <button
+              type="button"
+              data-testid="split-mode-custom"
+              aria-pressed={splitMode === "custom"}
+              onClick={() => {
+                setSplitMode("custom");
+                if (!ownerAmount && equalPer) {
+                  setOwnerAmount(equalPer);
+                }
+                setFriends((prev) =>
+                  prev.map((f) => ({
+                    ...f,
+                    amount: f.amount || equalPer || "",
+                  })),
+                );
+              }}
+              className={`flex-1 rounded-lg px-3 py-1.5 text-xs font-semibold transition ${
+                splitMode === "custom"
+                  ? "bg-elevated text-foreground shadow-sm"
+                  : "text-muted hover:text-foreground"
+              }`}
+            >
+              {t("newSub.customAmounts")}
+            </button>
+          </div>
+
+          {splitMode === "custom" ? (
+            <div className="rounded-xl border border-border bg-elevated-muted/50 px-3 py-3">
+              <label htmlFor="owner-share" className="pr-label">
+                {t("newSub.yourShare")}
+              </label>
+              <div className="relative">
+                <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-subtle">
+                  $
+                </span>
+                <input
+                  id="owner-share"
+                  data-testid="split-owner-amount"
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={ownerAmount}
+                  onChange={(e) => setOwnerAmount(e.target.value)}
+                  className="pr-input pl-7"
+                />
+              </div>
+            </div>
+          ) : null}
 
           <div className="space-y-3">
             {friends.map((f, i) => (
@@ -476,48 +591,69 @@ export default function NewSubscriptionPage() {
                 <div className="flex flex-col gap-2 md:flex-row md:items-center">
                   <input
                     type="email"
-                    placeholder="friend@email.com"
+                    placeholder={t("newSub.friendEmailPlaceholder")}
                     value={f.email}
                     onChange={(e) => lookupFriend(i, e.target.value)}
                     className="pr-input w-full min-w-0 flex-1"
                   />
-                  <div className="flex shrink-0 items-center justify-end gap-2 md:justify-start">
-                  {f.found ? (
-                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-emerald-500/15 text-xs font-bold text-emerald-800 dark:text-emerald-200">
-                      {f.displayName?.charAt(0).toUpperCase()}
+                  {splitMode === "custom" ? (
+                    <div className="relative w-full shrink-0 md:w-28">
+                      <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-subtle">
+                        $
+                      </span>
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        data-testid={`split-friend-amount-${i}`}
+                        placeholder="0.00"
+                        value={f.amount ?? ""}
+                        onChange={(e) => {
+                          const next = [...friends];
+                          next[i] = { ...f, amount: e.target.value };
+                          setFriends(next);
+                        }}
+                        className="pr-input pl-7"
+                      />
                     </div>
                   ) : null}
-                  {friends.length > 1 ? (
-                    <button
-                      type="button"
-                      onClick={() => removeFriendRow(i)}
-                      className="rounded-lg p-2 text-subtle transition hover:bg-red-500/10 hover:text-red-600"
-                      aria-label="Remove row"
-                    >
-                      <svg
-                        width="16"
-                        height="16"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="2"
-                        aria-hidden
+                  <div className="flex shrink-0 items-center justify-end gap-2 md:justify-start">
+                    {f.found ? (
+                      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-emerald-500/15 text-xs font-bold text-emerald-800 dark:text-emerald-200">
+                        {f.displayName?.charAt(0).toUpperCase()}
+                      </div>
+                    ) : null}
+                    {friends.length > 1 ? (
+                      <button
+                        type="button"
+                        onClick={() => removeFriendRow(i)}
+                        className="rounded-lg p-2 text-subtle transition hover:bg-red-500/10 hover:text-red-600"
+                        aria-label={t("newSub.removeRow")}
                       >
-                        <line x1="18" y1="6" x2="6" y2="18" />
-                        <line x1="6" y1="6" x2="18" y2="18" />
-                      </svg>
-                    </button>
-                  ) : null}
-                </div>
+                        <svg
+                          width="16"
+                          height="16"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="2"
+                          aria-hidden
+                        >
+                          <line x1="18" y1="6" x2="6" y2="18" />
+                          <line x1="6" y1="6" x2="18" y2="18" />
+                        </svg>
+                      </button>
+                    ) : null}
+                  </div>
                 </div>
                 {f.found ? (
                   <p className="ml-1 mt-1.5 text-xs font-medium text-emerald-700 dark:text-emerald-300">
                     ✓ {f.displayName}
                   </p>
                 ) : null}
-                {f.found === false && f.error ? (
-                  <p className="ml-1 mt-1.5 text-xs text-amber-800 dark:text-amber-200">
-                    {f.error}
+                {f.found === false && f.errorKey ? (
+                  <p className="pr-alert-warning ml-1 mt-1.5 rounded-md px-2 py-1 text-xs font-medium">
+                    {t(f.errorKey)}
                   </p>
                 ) : null}
               </div>
@@ -541,22 +677,36 @@ export default function NewSubscriptionPage() {
               <line x1="12" y1="5" x2="12" y2="19" />
               <line x1="5" y1="12" x2="19" y2="12" />
             </svg>
-            Add another friend
+            {t("newSub.addFriend")}
           </button>
 
-          {perPerson ? (
+          {splitMode === "equal" && perPerson ? (
             <div className="rounded-xl border border-accent/20 bg-accent-muted px-4 py-3 text-sm text-accent dark:text-blue-100">
-              Each friend owes <strong>${perPerson}/month</strong> ·{" "}
-              {memberCount} friend{memberCount > 1 ? "s" : ""} + you
+              {t("newSub.eachOwes", { amount: perPerson, n: memberCount })}
+            </div>
+          ) : null}
+          {splitMode === "custom" ? (
+            <div
+              className={`rounded-xl border px-4 py-3 text-sm ${
+                customSumOk
+                  ? "border-accent/20 bg-accent-muted text-accent dark:text-blue-100"
+                  : "pr-alert-danger"
+              }`}
+              data-testid="split-sum-status"
+            >
+              {customSumOk
+                ? t("newSub.customSumOk", { amount: costNum.toFixed(2) })
+                : t("newSub.customSumBad", { amount: costNum.toFixed(2) })}
             </div>
           ) : null}
 
           <button
             type="button"
+            disabled={splitMode === "custom" && !customSumOk}
             onClick={() => setStep(2)}
-            className="pr-btn-primary w-full"
+            className="pr-btn-primary w-full disabled:opacity-50"
           >
-            Continue to review
+            {t("newSub.continueReview")}
           </button>
         </div>
       ) : null}
@@ -565,28 +715,52 @@ export default function NewSubscriptionPage() {
         <div className="space-y-5">
           <div className="pr-card w-full p-4 sm:p-6 md:p-8">
             <h2 className="mb-5 text-sm font-semibold text-foreground">
-              Summary
+              {t("newSub.summary")}
             </h2>
             <div className="space-y-1 text-sm">
               {[
-                { label: "Service", value: name },
+                { label: t("newSub.label.service"), value: name },
                 {
-                  label: "Total cost",
-                  value: `$${parseFloat(totalCost || "0").toFixed(2)} / month`,
+                  label: t("newSub.label.totalCost"),
+                  value: t("newSub.perMonth", {
+                    amount: parseFloat(totalCost || "0").toFixed(2),
+                  }),
                 },
                 {
-                  label: "Billing day",
+                  label: t("newSub.label.billingDay"),
                   value: formatBillingDayPhrase(dueDayOfMonth),
                 },
                 {
-                  label: "Friends",
-                  value: `${friends.filter((f) => f.email).length} invited`,
+                  label: t("newSub.label.split"),
+                  value:
+                    splitMode === "custom"
+                      ? t("newSub.customAmounts")
+                      : t("newSub.equalSplit"),
                 },
                 {
-                  label: "Each friend pays",
-                  value: perPerson ? `$${perPerson} / month` : "—",
+                  label: t("newSub.label.friends"),
+                  value: t("newSub.friendsInvited", {
+                    n: friends.filter((f) => f.email).length,
+                  }),
                 },
-                { label: "First cycle", value: toCycleId(new Date()) },
+                {
+                  label:
+                    splitMode === "custom"
+                      ? t("newSub.label.yourShare")
+                      : t("newSub.label.eachPays"),
+                  value:
+                    splitMode === "custom"
+                      ? t("newSub.perMonth", {
+                          amount: ownerAmtNum.toFixed(2),
+                        })
+                      : perPerson
+                        ? t("newSub.perMonth", { amount: perPerson })
+                        : "—",
+                },
+                {
+                  label: t("newSub.label.firstCycle"),
+                  value: toCycleId(new Date()),
+                },
               ].map((row) => (
                 <div
                   key={row.label}
@@ -602,14 +776,12 @@ export default function NewSubscriptionPage() {
           </div>
 
           <div className="space-y-2 rounded-2xl border border-accent/25 bg-accent-muted px-4 py-4 text-xs font-medium leading-relaxed text-accent dark:text-blue-100">
-            <p>✓ A new payment cycle opens for the current month.</p>
-            <p>✓ Registered friends receive an in-app notification.</p>
-            <p>✓ You can manage this subscription from the dashboard.</p>
+            <p>{t("newSub.bullet.cycle")}</p>
+            <p>{t("newSub.bullet.registered")}</p>
+            <p>{t("newSub.bullet.manage")}</p>
             {inviteEmailCount > 0 ? (
               <p className="pt-1 text-sm font-semibold text-foreground">
-                {inviteEmailCount} friend
-                {inviteEmailCount !== 1 ? "s" : ""} will receive an invite email
-                (including anyone already on Payround).
+                {t("newSub.inviteCount", { n: inviteEmailCount })}
               </p>
             ) : null}
           </div>
@@ -617,7 +789,7 @@ export default function NewSubscriptionPage() {
           {error ? (
             <p
               role="alert"
-              className="rounded-lg bg-red-500/10 px-3 py-2 text-sm text-red-700 dark:text-red-300"
+              className="pr-alert-danger rounded-lg px-3 py-2 text-sm"
             >
               {error}
             </p>
@@ -635,7 +807,7 @@ export default function NewSubscriptionPage() {
                   className="h-4 w-4 animate-spin rounded-full border-2 border-accent-foreground/30 border-t-accent-foreground"
                   aria-hidden
                 />
-                Creating…
+                {t("newSub.creating")}
               </>
             ) : (
               <>
@@ -651,7 +823,7 @@ export default function NewSubscriptionPage() {
                   <path d="M22 2L11 13" />
                   <path d="M22 2L15 22 11 13 2 9l20-7z" />
                 </svg>
-                Launch tracker
+                {t("newSub.launch")}
               </>
             )}
           </button>
@@ -662,17 +834,19 @@ export default function NewSubscriptionPage() {
         <div className="space-y-5">
           <div className="pr-card w-full p-4 shadow-card sm:p-6 md:p-8">
             <h2 className="mb-2 text-sm font-semibold text-foreground">
-              Share invites
+              {t("newSub.shareTitle")}
             </h2>
             <p className="mb-6 text-sm leading-relaxed text-muted">
-              Your subscription is live. Friends with an account get an in-app
-              invite; everyone can also use the link below (WhatsApp or copy).
+              {t("newSub.shareLead")}
             </p>
             <ul className="space-y-4">
               {manualInviteLinks.map(
                 ({ email, url, emailFailureReason, inAppNotified }) => {
                   const whatsappHref = `https://wa.me/?text=${encodeURIComponent(
-                    `You're invited to split ${name.trim()} on Payround: ${url}`,
+                    t("newSub.whatsappMsg", {
+                      name: name.trim(),
+                      url,
+                    }),
                   )}`;
                   return (
                     <li
@@ -684,12 +858,11 @@ export default function NewSubscriptionPage() {
                       </p>
                       {inAppNotified ? (
                         <p className="mb-3 text-xs text-emerald-800 dark:text-emerald-200">
-                          In-app notification sent — they must Accept in
-                          Notifications before joining.
+                          {t("newSub.inAppSent")}
                         </p>
                       ) : null}
                       {emailFailureReason ? (
-                        <p className="mb-3 rounded-lg border border-amber-500/25 bg-amber-500/10 px-2.5 py-2 text-xs text-amber-950 dark:text-amber-100">
+                        <p className="pr-alert-warning mb-3 rounded-lg px-2.5 py-2 text-xs">
                           {emailFailureReason}
                         </p>
                       ) : null}
@@ -714,7 +887,7 @@ export default function NewSubscriptionPage() {
                         >
                           <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z" />
                         </svg>
-                        Share on WhatsApp
+                        {t("newSub.shareWhatsApp")}
                       </a>
                     </li>
                   );
@@ -727,10 +900,10 @@ export default function NewSubscriptionPage() {
             onClick={() => router.push("/dashboard")}
             className="pr-btn-primary w-full py-3.5"
           >
-            Continue to dashboard
+            {t("newSub.continueDashboard")}
           </button>
         </div>
       ) : null}
-    </div>
+    </AppPage>
   );
 }

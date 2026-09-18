@@ -272,7 +272,7 @@ export default function InviteByTokenPage({ params }: PageProps) {
             </div>
           ) : signedInMismatch ? (
             <div className="space-y-4">
-              <p className="text-sm text-amber-800 dark:text-amber-200">
+              <p className="pr-alert-warning rounded-xl px-3 py-2.5 text-sm">
                 You&apos;re signed in as {appUser!.email}, but this invite is for{" "}
                 {invite.invitedEmail}. Sign out and use the invited account, or
                 ask for a new invite.
@@ -394,7 +394,7 @@ export default function InviteByTokenPage({ params }: PageProps) {
           {formError ? (
             <p
               role="alert"
-              className="text-center text-sm text-red-600 dark:text-red-400"
+              className="text-center text-sm pr-text-danger"
             >
               {formError}
             </p>
